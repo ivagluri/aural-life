@@ -206,6 +206,7 @@
       <div class="row">
         <button id="tool-paint" class="active">paint</button>
         <button id="tool-erase">erase</button>
+        <button id="tool-block">box</button>
         <button id="tool-blinker">blinker</button>
         <button id="tool-pulsar">pulsar</button>
         <button id="tool-glider">glider</button>
@@ -441,6 +442,7 @@
     return out;
   }
   const PATTERNS = {
+    block:[[0,0],[1,0],[0,1],[1,1]],
     blinker:[[0,0],[1,0],[2,0]],
     glider:[[1,0],[2,1],[0,2],[1,2],[2,2]],
     pulsar: pulsarCells(),
@@ -522,7 +524,7 @@
 
   // ---------- custom stamps (name -> [[x,y],...], normalized to origin) ----------
   let customStamps={};
-  const RESERVED_STAMP=['paint','erase','blinker','pulsar','glider','glidergun'];
+  const RESERVED_STAMP=['paint','erase','block','blinker','pulsar','glider','glidergun'];
   function getPatternCells(name){ return AL.PATTERNS[name] || customStamps[name] || []; }
   function uniqueStampName(name){
     name=name||'stamp';
@@ -991,7 +993,7 @@
   }
   function setTool(name){
     State.tool=name;
-    ['paint','erase','blinker','pulsar','glider','glidergun'].forEach(t=>
+    ['paint','erase','block','blinker','pulsar','glider','glidergun'].forEach(t=>
       $('tool-'+t).classList.toggle('active', t===name));
     $('custom-stamp').value = customStamps[name] ? name : '';
   }
@@ -1051,7 +1053,7 @@
   [['col-bg','bg'],['col-live','live'],['col-dying','dying'],['col-dead','dead'],['col-hover','hover']].forEach(([id,key])=>{
     $(id).addEventListener('input', e=>{ State.custom[key]=e.target.value; saveCustom(); if(State.theme==='custom') applyTheme(); });
   });
-  ['paint','erase','blinker','pulsar','glider','glidergun'].forEach(t=>
+  ['paint','erase','block','blinker','pulsar','glider','glidergun'].forEach(t=>
     $('tool-'+t).addEventListener('click', ()=>setTool(t)));
 
   $('save-stamp').addEventListener('click', ()=>{

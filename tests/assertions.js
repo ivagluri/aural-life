@@ -40,6 +40,15 @@
       checks.push('block is a still life');
     })();
 
+    // --- Pattern library: the "block" stamp is a real 2x2 still life ---
+    (function () {
+      eq(AL.PATTERNS.block.length, 4, 'block stamp has 4 cells');
+      var cols = 4, rows = 4, g = AL.makeGrid(cols, rows);
+      AL.PATTERNS.block.forEach(function (c) { g[(c[1] + 1) * cols + (c[0] + 1)] = 1; }); // place at (1,1)
+      deepEq(AL.step(g, cols, rows).grid, g, 'block stamp is stable');
+      checks.push('block stamp is a 2x2 still life');
+    })();
+
     // --- Engine: born set reports only new cells ---
     (function () {
       var cols = 5, rows = 5, g = AL.makeGrid(cols, rows);
