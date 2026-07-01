@@ -88,22 +88,24 @@
     (function () {
       var cols = 48, rows = 24, grid = AL.makeGrid(cols, rows);
       for (var i = 0; i < grid.length; i++) grid[i] = (i * 2654435761 % 10) < 3 ? 1 : 0; // deterministic
-      var custom = { bg: '#010203', live: '#0a0b0c', dying: '#111213', dead: '#141516', hover: '#171819' };
-      var state = { grid: grid, cols: cols, rows: rows, mode: 'sweep', bpm: 137,
+      var custom = { bg: '#010203', live: '#0a0b0c', dying: '#111213', hover: '#171819' };
+      var state = { grid: grid, cols: cols, rows: rows, mode: 'sweep', sweepDir: -1, bpm: 137,
         scaleId: 'minpent', root: 7, snap: true, voice: 'pad', theme: 'custom', trigger: 'live', custom: custom };
       var dec = AL.decodeState(AL.encodeState(state));
       deepEq(dec.grid, grid, 'grid round-trip');
       eq(dec.cols, cols); eq(dec.rows, rows); eq(dec.mode, 'sweep'); eq(dec.bpm, 137);
+      eq(dec.sweepDir, -1, 'reversed sweep direction round-trips');
       eq(dec.scaleId, 'minpent'); eq(dec.root, 7); eq(dec.snap, true);
       eq(dec.voice, 'pad'); eq(dec.theme, 'custom'); eq(dec.trigger, 'live');
       ok(dec.custom && dec.custom.bg === custom.bg && dec.custom.live === custom.live &&
-         dec.custom.dying === custom.dying && dec.custom.dead === custom.dead &&
+         dec.custom.dying === custom.dying &&
          dec.custom.hover === custom.hover, 'custom palette round-trips');
       // no-custom case stays null
       var d2 = AL.decodeState(AL.encodeState({ grid: AL.makeGrid(4, 4), cols: 4, rows: 4,
         mode: 'pulse', bpm: 100, scaleId: 'majpent', root: 0, snap: false, voice: 'bell',
         theme: 'green', trigger: 'newborn' }));
       ok(d2.custom === null, 'absent custom palette decodes to null');
+      eq(d2.sweepDir, 1, 'absent dir decodes to forward (old links stay valid)');
       checks.push('encode/decode round-trips pattern + settings + custom palette');
     })();
 
