@@ -194,6 +194,13 @@
         <button id="tool-glider">glider</button>
         <button id="tool-glidergun">gun</button>
       </div>
+      <div class="row">
+        <button id="save-stamp">save grid as stamp</button>
+        <select id="custom-stamp"><option value="">— custom stamps —</option></select>
+        <button id="share-stamp">share</button>
+        <button id="import-stamp">import</button>
+        <button id="del-stamp">del</button>
+      </div>
     </div>
 
     <!-- share -->
@@ -201,6 +208,7 @@
       <span class="label">share / save</span>
       <div class="row">
         <button id="copy">copy link</button>
+        <button id="paste">load code</button>
         <button id="save">save</button>
         <select id="slots"><option value="">— slots —</option></select>
         <button id="load">load</button>
@@ -335,13 +343,18 @@
   // across browser / Node / JavaScriptCore. All values are URL-safe already
   // (base64url grid, integers, fixed enum strings).
   function encodeState(s){
-    return [
+    const parts=[
       'p='+packGrid(s.grid),
       'c='+s.cols, 'r='+s.rows,
       'm='+s.mode, 'bpm='+s.bpm,
       's='+s.scaleId, 'root='+s.root, 'snap='+(s.snap?1:0),
       'v='+s.voice, 't='+s.theme, 'trig='+s.trigger
-    ].join('&');
+    ];
+    if(s.custom && s.theme==='custom'){
+      const c=s.custom, hx=h=>String(h||'').replace('#','');
+      parts.push('cc='+[hx(c.bg),hx(c.live),hx(c.dying),hx(c.dead),hx(c.hover)].join('-'));
+    }
+    return parts.join('&');
   }
   function decodeState(str){
     const q={};
@@ -351,6 +364,11 @@
       q[eq<0?kv:kv.slice(0,eq)] = eq<0?'':kv.slice(eq+1);
     }
     const cols=+q.c||48, rows=+q.r||24;
+    let custom=null;
+    if(q.cc){
+      const p=q.cc.split('-');
+      if(p.length===5) custom={ bg:'#'+p[0], live:'#'+p[1], dying:'#'+p[2], dead:'#'+p[3], hover:'#'+p[4] };
+    }
     return {
       grid: unpackGrid(q.p||'', cols*rows),
       cols, rows,
@@ -361,8 +379,32 @@
       snap: q.snap==='1',
       voice: q.v||'bell',
       theme: q.t||'green',
-      trigger: q.trig||'newborn'
+      trigger: q.trig||'newborn',
+      custom
     };
+  }
+
+  // ---- Shareable stamp codes ----
+  // A stamp = a named list of [x,y] cells (origin-normalized). Encoded as a compact,
+  // URL-safe string "w.h.<base64url bitmap>.<uriEncoded name>" so it can ride in a link.
+  function encodeStamp(name, cells){
+    let w=0, h=0;
+    for(const c of cells){ if(c[0]+1>w) w=c[0]+1; if(c[1]+1>h) h=c[1]+1; }
+    const g=new Uint8Array(w*h);
+    for(const c of cells) g[c[1]*w + c[0]] = 1;
+    return w+'.'+h+'.'+packGrid(g)+'.'+encodeURIComponent(name||'');
+  }
+  function decodeStamp(code){
+    const parts=String(code||'').split('.');
+    if(parts.length<4) return null;
+    const w=+parts[0], h=+parts[1];
+    if(!(w>0) || !(h>0)) return null;
+    const g=unpackGrid(parts[2], w*h);
+    const cells=[];
+    for(let i=0;i<g.length;i++) if(g[i]) cells.push([i%w, Math.floor(i/w)]);
+    let name='stamp';
+    try{ name=decodeURIComponent(parts.slice(3).join('.')); }catch(e){ name=parts.slice(3).join('.'); }
+    return { name, cells };
   }
 
   // ---- Pattern library (cells as [col,row]) ----
@@ -389,6 +431,7 @@
     makeGrid, neighbors, step,
     SCALES, BASE_MIDI, rowToMidi, midiToFreq, rowToFreq, snapToScale,
     packGrid, unpackGrid, encodeState, decodeState,
+    encodeStamp, decodeStamp,
     PATTERNS, pulsarCells
   };
 })(typeof window!=='undefined' ? window : (typeof globalThis!=='undefined' ? globalThis : this));
@@ -448,6 +491,26 @@
 
   function loadCustom(){ try{ const c=JSON.parse(localStorage.getItem('aurallife.custom')||'null'); if(c) Object.assign(State.custom, c); }catch(e){} }
   function saveCustom(){ try{ localStorage.setItem('aurallife.custom', JSON.stringify(State.custom)); }catch(e){} }
+
+  // ---------- custom stamps (name -> [[x,y],...], normalized to origin) ----------
+  let customStamps={};
+  const RESERVED_STAMP=['paint','erase','blinker','pulsar','glider','glidergun'];
+  function getPatternCells(name){ return AL.PATTERNS[name] || customStamps[name] || []; }
+  function uniqueStampName(name){
+    name=name||'stamp';
+    if(RESERVED_STAMP.includes(name)) name='_'+name;
+    if(!customStamps[name]) return name;
+    let n=2; while(customStamps[name+' '+n]) n++; return name+' '+n;
+  }
+  function importStampCode(code){
+    let s=null; try{ s=AL.decodeStamp(code); }catch(e){}
+    if(!s || !s.cells.length){ toast('invalid stamp code'); return false; }
+    const name=uniqueStampName(s.name);
+    customStamps[name]=s.cells; saveStamps(); refreshStampPicker();
+    setTool(name); toast('imported stamp: '+name); return true;
+  }
+  function loadStamps(){ try{ const s=JSON.parse(localStorage.getItem('aurallife.stamps')||'null'); if(s) customStamps=s; }catch(e){} }
+  function saveStamps(){ try{ localStorage.setItem('aurallife.stamps', JSON.stringify(customStamps)); }catch(e){} }
 
   // ---------- audio ----------
   let actx=null, masterGain, limiter, dryGain, reverbGain, convolver;
@@ -721,14 +784,18 @@
       ctx.restore();
     }
 
-    // hover cell: subtle glowing outline (not filled)
+    // hover outline (not filled): a single cell for paint/erase, or the whole
+    // footprint of the active stamp so you can see exactly what it will place.
     if(hover.on && hover.c>=0 && hover.r>=0){
-      const h=p.hover, x=hover.c*cs+pad, y=hover.r*cs+pad, s=cs-pad*2;
+      const h=p.hover;
+      const targets = isStampTool() ? stampCells(State.tool, hover.c, hover.r) : [[hover.c, hover.r]];
       ctx.save();
       ctx.strokeStyle=rgba(h,0.45);
       ctx.lineWidth=Math.max(1, cs*0.06);
       ctx.shadowColor=rgba(h,1); ctx.shadowBlur=10;
-      roundRect(x,y,s,s,rad); ctx.stroke();
+      for(const [c,r] of targets){
+        roundRect(c*cs+pad, r*cs+pad, cs-pad*2, cs-pad*2, rad); ctx.stroke();
+      }
       ctx.restore();
     }
   }
@@ -762,14 +829,18 @@
     return {c:Math.max(0,Math.min(State.cols-1,c)), r:Math.max(0,Math.min(State.rows-1,r))};
   }
   function setCell(c,r,v){ const i=r*State.cols+c; State.grid[i]=v; if(v) heat[i]=1; }
-  function stampPattern(name,cx,cy){
-    const cells=AL.PATTERNS[name]; if(!cells) return;
+  // Resolve a stamp's cells centered at (cx,cy), wrapped toroidally — shared by the
+  // actual stamp and its hover preview so the outline matches exactly what gets placed.
+  function stampCells(name,cx,cy){
+    const cells=getPatternCells(name); if(!cells.length) return [];
     let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
     for(const [x,y] of cells){ minx=Math.min(minx,x);miny=Math.min(miny,y);maxx=Math.max(maxx,x);maxy=Math.max(maxy,y); }
     const ox=cx-Math.floor((minx+maxx)/2), oy=cy-Math.floor((miny+maxy)/2);
-    for(const [x,y] of cells){
-      const c=((x+ox)%State.cols+State.cols)%State.cols;
-      const r=((y+oy)%State.rows+State.rows)%State.rows;
+    return cells.map(([x,y])=>[((x+ox)%State.cols+State.cols)%State.cols, ((y+oy)%State.rows+State.rows)%State.rows]);
+  }
+  const isStampTool = ()=> State.tool!=='paint' && State.tool!=='erase';
+  function stampPattern(name,cx,cy){
+    for(const [c,r] of stampCells(name,cx,cy)){
       setCell(c,r,1);
     }
     commitEdit();
@@ -805,10 +876,26 @@
       cols:d.cols, rows:d.rows, grid:d.grid, mode:d.mode, bpm:d.bpm,
       scaleId:d.scaleId, root:d.root, snap:d.snap, voice:d.voice, theme:d.theme, trigger:d.trigger
     });
+    if(d.custom){ Object.assign(State.custom, d.custom); saveCustom(); }
     if(resized){ heat=new Float32Array(State.cols*State.rows); ghost=new Float32Array(State.cols*State.rows); }
     simGrid=State.grid.slice(); simPlay=0; State.playhead=0; visualQueue.length=0;
     syncControls(); applyTheme();
     if(resized) resizeCanvas();
+  }
+
+  // Restore a whole session from a pasted link or raw code (the part after '#').
+  // Also imports a stamp if the code carries one.
+  function importSessionCode(input){
+    input=(input||'').trim(); if(!input) return;
+    const code = input.indexOf('#')>=0 ? input.slice(input.indexOf('#')+1) : input;
+    const mStamp=code.match(/(?:^|&)stamp=([^&]*)/);
+    if(mStamp) importStampCode(mStamp[1]);
+    if(/(?:^|&)p=/.test(code)){
+      try{ applyDecoded(AL.decodeState(code)); toast('session loaded ✓'); }
+      catch(e){ toast('invalid session code'); }
+    } else if(!mStamp){
+      toast('invalid session code');
+    }
   }
 
   function readSlots(){ try{ return JSON.parse(localStorage.getItem(SLOT_KEY)||'[]'); }catch(e){ return []; } }
@@ -846,6 +933,22 @@
     State.tool=name;
     ['paint','erase','blinker','pulsar','glider','glidergun'].forEach(t=>
       $('tool-'+t).classList.toggle('active', t===name));
+    $('custom-stamp').value = customStamps[name] ? name : '';
+  }
+  function refreshStampPicker(){
+    const sel=$('custom-stamp');
+    sel.innerHTML='<option value="">— custom stamps —</option>';
+    Object.keys(customStamps).forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=n; sel.appendChild(o); });
+    sel.value = customStamps[State.tool] ? State.tool : '';
+  }
+  // Capture the current grid's live cells as a stamp, normalized to its bounding box.
+  function captureStamp(){
+    const cells=[]; let minx=1e9, miny=1e9;
+    for(let i=0;i<State.grid.length;i++) if(State.grid[i]){
+      const c=i%State.cols, r=Math.floor(i/State.cols);
+      cells.push([c,r]); if(c<minx)minx=c; if(r<miny)miny=r;
+    }
+    return cells.map(([c,r])=>[c-minx, r-miny]);
   }
   let toastTimer=null;
   function toast(msg){
@@ -887,6 +990,40 @@
   ['paint','erase','blinker','pulsar','glider','glidergun'].forEach(t=>
     $('tool-'+t).addEventListener('click', ()=>setTool(t)));
 
+  $('save-stamp').addEventListener('click', ()=>{
+    const cells=captureStamp();
+    if(!cells.length){ toast('grid is empty'); return; }
+    let name=prompt('name this stamp:', 'stamp '+(Object.keys(customStamps).length+1));
+    if(name===null) return;
+    name=name.trim();
+    if(!name){ return; }
+    if(RESERVED_STAMP.includes(name)){ toast('name is reserved'); return; }
+    customStamps[name]=cells; saveStamps(); refreshStampPicker();
+    setTool(name); toast('saved stamp: '+name);
+  });
+  $('custom-stamp').addEventListener('change', e=>{ if(e.target.value) setTool(e.target.value); });
+  $('share-stamp').addEventListener('click', ()=>{
+    const name=$('custom-stamp').value;
+    if(!name || !customStamps[name]){ toast('select a custom stamp first'); return; }
+    const code=AL.encodeStamp(name, customStamps[name]);
+    const url=location.href.split('#')[0] + '#stamp=' + code;
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(url).then(()=>toast('stamp link copied ✓'), ()=>prompt('stamp link:', url));
+    } else { prompt('stamp link:', url); }
+  });
+  $('import-stamp').addEventListener('click', ()=>{
+    const input=prompt('paste a stamp link or code:');
+    if(!input) return;
+    const code = input.indexOf('stamp=')>=0 ? input.split('stamp=')[1].split('&')[0].trim() : input.trim();
+    importStampCode(code);
+  });
+  $('del-stamp').addEventListener('click', ()=>{
+    const name=$('custom-stamp').value; if(!name) return;
+    delete customStamps[name]; saveStamps(); refreshStampPicker();
+    if(State.tool===name) setTool('paint');
+    toast('deleted stamp');
+  });
+
   $('copy').addEventListener('click', ()=>{
     const enc=currentEncoded();
     location.hash=enc;
@@ -894,6 +1031,10 @@
     if(navigator.clipboard && navigator.clipboard.writeText){
       navigator.clipboard.writeText(url).then(()=>toast('link copied ✓'), ()=>toast('link in URL bar'));
     } else { toast('link in URL bar'); }
+  });
+  $('paste').addEventListener('click', ()=>{
+    const input=prompt('paste a session link or code:');
+    if(input) importSessionCode(input);
   });
   $('save').addEventListener('click', ()=>{
     const name=prompt('save as:', 'pattern '+(readSlots().length+1));
@@ -929,14 +1070,19 @@
   }
 
   function boot(){
-    loadCustom();
-    if(location.hash.length>1){
-      try{ applyDecoded(AL.decodeState(location.hash.slice(1))); }
+    loadCustom(); loadStamps();
+    const hash=location.hash.slice(1);
+    // A shared stamp link (#stamp=<code>) imports into the library. Extract it raw
+    // (undecoded) so decodeStamp does the single decodeURIComponent itself.
+    const mStamp=hash.match(/(?:^|&)stamp=([^&]*)/);
+    if(mStamp) importStampCode(mStamp[1]);
+    if(/(?:^|&)p=/.test(hash)){
+      try{ applyDecoded(AL.decodeState(hash)); }
       catch(e){ seedDefault(); }
     } else {
       seedDefault();
     }
-    syncControls(); applyTheme(); refreshSlots(); resizeCanvas();
+    syncControls(); applyTheme(); refreshSlots(); refreshStampPicker(); resizeCanvas();
     commitEdit();
     requestAnimationFrame(tick);
   }

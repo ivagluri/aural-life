@@ -79,14 +79,36 @@
     (function () {
       var cols = 48, rows = 24, grid = AL.makeGrid(cols, rows);
       for (var i = 0; i < grid.length; i++) grid[i] = (i * 2654435761 % 10) < 3 ? 1 : 0; // deterministic
+      var custom = { bg: '#010203', live: '#0a0b0c', dying: '#111213', dead: '#141516', hover: '#171819' };
       var state = { grid: grid, cols: cols, rows: rows, mode: 'sweep', bpm: 137,
-        scaleId: 'minpent', root: 7, snap: true, voice: 'pad', theme: 'cyan', trigger: 'live' };
+        scaleId: 'minpent', root: 7, snap: true, voice: 'pad', theme: 'custom', trigger: 'live', custom: custom };
       var dec = AL.decodeState(AL.encodeState(state));
       deepEq(dec.grid, grid, 'grid round-trip');
       eq(dec.cols, cols); eq(dec.rows, rows); eq(dec.mode, 'sweep'); eq(dec.bpm, 137);
       eq(dec.scaleId, 'minpent'); eq(dec.root, 7); eq(dec.snap, true);
-      eq(dec.voice, 'pad'); eq(dec.theme, 'cyan'); eq(dec.trigger, 'live');
-      checks.push('encode/decode round-trips pattern + settings');
+      eq(dec.voice, 'pad'); eq(dec.theme, 'custom'); eq(dec.trigger, 'live');
+      ok(dec.custom && dec.custom.bg === custom.bg && dec.custom.live === custom.live &&
+         dec.custom.dying === custom.dying && dec.custom.dead === custom.dead &&
+         dec.custom.hover === custom.hover, 'custom palette round-trips');
+      // no-custom case stays null
+      var d2 = AL.decodeState(AL.encodeState({ grid: AL.makeGrid(4, 4), cols: 4, rows: 4,
+        mode: 'pulse', bpm: 100, scaleId: 'majpent', root: 0, snap: false, voice: 'bell',
+        theme: 'green', trigger: 'newborn' }));
+      ok(d2.custom === null, 'absent custom palette decodes to null');
+      checks.push('encode/decode round-trips pattern + settings + custom palette');
+    })();
+
+    // --- Shareable stamps: encode/decode round-trips cells + name ---
+    (function () {
+      var cells = [[0, 0], [2, 0], [1, 1], [0, 2], [4, 3]]; // arbitrary shape, w=5 h=4
+      var name = 'my cool stamp.v2 & co';                   // dots, space, ampersand
+      var s = AL.decodeStamp(AL.encodeStamp(name, cells));
+      eq(s.name, name, 'stamp name round-trips');
+      // order-independent cell comparison
+      var norm = function (a) { return a.map(function (c) { return c[0] + ',' + c[1]; }).sort().join(';'); };
+      eq(norm(s.cells), norm(cells), 'stamp cells round-trip');
+      ok(AL.decodeStamp('garbage') === null, 'bad stamp code returns null');
+      checks.push('shareable stamp code round-trips');
     })();
 
     // --- Persistence: bit pack/unpack lossless across byte boundary ---
