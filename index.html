@@ -71,6 +71,8 @@
   }
   #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
   a{ color:var(--accent); }
+  .swatch{ display:flex; align-items:center; gap:5px; color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.5px; }
+  input[type=color]{ width:26px; height:22px; padding:0; border:1px solid #1c2a1c; border-radius:4px; background:#0a0f0a; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -168,8 +170,16 @@
           <option value="amber">amber</option>
           <option value="cyan">cyan</option>
           <option value="magenta">magenta</option>
+          <option value="custom">custom…</option>
         </select>
         <label class="chk"><input type="checkbox" id="trails" checked> trails</label>
+      </div>
+      <div class="row" id="custom-colors" style="display:none">
+        <label class="swatch">bg<input type="color" id="col-bg"></label>
+        <label class="swatch">live<input type="color" id="col-live"></label>
+        <label class="swatch">dying<input type="color" id="col-dying"></label>
+        <label class="swatch">dead<input type="color" id="col-dead"></label>
+        <label class="swatch">hover<input type="color" id="col-hover"></label>
       </div>
     </div>
 
@@ -401,6 +411,7 @@
     scaleId:'majpent', root:0, snap:false,
     voice:'pluck', trigger:'newborn',
     reverb:0.35, volume:0.7, theme:'green', trails:true,
+    custom:{ bg:'#000000', live:'#39ff14', dying:'#2a7d18', dead:'#0a1a0a', hover:'#39ff14' },
     tool:'paint', running:false, playhead:0
   };
   State.grid = AL.makeGrid(State.cols, State.rows);
@@ -416,6 +427,27 @@
     cyan:   {bg:'#000', cell:[0,229,255],  grid:'#001a1f', playhead:'rgba(176,247,255,.18)', accent:'#00e5ff', dim:'#5f8a90'},
     magenta:{bg:'#000', cell:[255,43,214], grid:'#1f0018', playhead:'rgba(255,176,240,.18)', accent:'#ff2bd6', dim:'#8a5f83'}
   };
+
+  // ---------- color helpers + resolved palette ----------
+  function normHex(h){ return /^#[0-9a-f]{3}$/i.test(h) ? '#'+h[1]+h[1]+h[2]+h[2]+h[3]+h[3] : h; }
+  function hexToRgb(h){ h=normHex(h); return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; }
+  function rgbToHex(a){ return '#'+a.map(v=>Math.max(0,Math.min(255,v|0)).toString(16).padStart(2,'0')).join(''); }
+  function rgba(a,al){ return `rgba(${a[0]},${a[1]},${a[2]},${al})`; }
+
+  // Returns { bg, gridStr, live[], dying[], hover[], playheadStr, accent, dim }
+  function palette(){
+    if(State.theme==='custom'){
+      const c=State.custom, live=hexToRgb(c.live);
+      return { bg:c.bg, gridStr:c.dead, live, dying:hexToRgb(c.dying), hover:hexToRgb(c.hover),
+               playheadStr:rgba(live,0.18), accent:c.live, dim:'#8a8a8a' };
+    }
+    const th=THEMES[State.theme]||THEMES.green;
+    return { bg:th.bg, gridStr:th.grid, live:th.cell, dying:th.cell, hover:th.cell,
+             playheadStr:th.playhead, accent:th.accent, dim:th.dim };
+  }
+
+  function loadCustom(){ try{ const c=JSON.parse(localStorage.getItem('aurallife.custom')||'null'); if(c) Object.assign(State.custom, c); }catch(e){} }
+  function saveCustom(){ try{ localStorage.setItem('aurallife.custom', JSON.stringify(State.custom)); }catch(e){} }
 
   // ---------- audio ----------
   let actx=null, masterGain, limiter, dryGain, reverbGain, convolver;
@@ -656,11 +688,11 @@
   }
 
   function draw(){
-    const th=THEMES[State.theme], W=State.cols*cs, H=State.rows*cs;
-    ctx.fillStyle=th.bg; ctx.fillRect(0,0,W,H);
+    const p=palette(), W=State.cols*cs, H=State.rows*cs;
+    ctx.fillStyle=p.bg; ctx.fillRect(0,0,W,H);
 
-    // grid lines
-    ctx.strokeStyle=th.grid; ctx.lineWidth=1;
+    // grid lines (dead-cell color)
+    ctx.strokeStyle=p.gridStr; ctx.lineWidth=1;
     ctx.beginPath();
     for(let c=0;c<=State.cols;c++){ ctx.moveTo(c*cs+.5,0); ctx.lineTo(c*cs+.5,H); }
     for(let r=0;r<=State.rows;r++){ ctx.moveTo(0,r*cs+.5); ctx.lineTo(W,r*cs+.5); }
@@ -668,33 +700,34 @@
 
     // sweep playhead
     if(State.mode==='sweep'){
-      ctx.fillStyle=th.playhead;
+      ctx.fillStyle=p.playheadStr;
       ctx.fillRect(State.playhead*cs, 0, cs, H);
     }
 
-    // cells + glow trails: alive cells glow (bloom on note-hit via heat); dead cells
-    // linger as a fading ghost (generation-stepped) for the dreamy trail.
-    const [cr,cg,cb]=th.cell, pad=Math.max(1, cs*0.12), rad=Math.min(6, cs*0.22);
+    // cells + glow trails: alive cells glow (bloom on note-hit via heat) in the live
+    // color; dead cells linger as a fading ghost (generation-stepped) in the dying color.
+    const live=p.live, dying=p.dying, pad=Math.max(1, cs*0.12), rad=Math.min(6, cs*0.22);
     for(let i=0;i<State.grid.length;i++){
       const alive=State.grid[i];
       const g = alive ? Math.max(0.82, heat[i]) : (State.trails ? ghost[i] : 0);
       if(g<=0.02) continue;
+      const col = alive ? live : dying;
       const c=i%State.cols, r=Math.floor(i/State.cols);
       const x=c*cs+pad, y=r*cs+pad, s=cs-pad*2;
       ctx.save();
-      if(g>0.15){ ctx.shadowColor=`rgb(${cr},${cg},${cb})`; ctx.shadowBlur=g*g*24; }
-      ctx.fillStyle=`rgba(${cr},${cg},${cb},${Math.min(1,g)})`;
+      if(g>0.15){ ctx.shadowColor=rgba(col,1); ctx.shadowBlur=g*g*24; }
+      ctx.fillStyle=rgba(col, Math.min(1,g));
       roundRect(x,y,s,s,rad); ctx.fill();
       ctx.restore();
     }
 
     // hover cell: subtle glowing outline (not filled)
     if(hover.on && hover.c>=0 && hover.r>=0){
-      const x=hover.c*cs+pad, y=hover.r*cs+pad, s=cs-pad*2;
+      const h=p.hover, x=hover.c*cs+pad, y=hover.r*cs+pad, s=cs-pad*2;
       ctx.save();
-      ctx.strokeStyle=`rgba(${cr},${cg},${cb},0.45)`;
+      ctx.strokeStyle=rgba(h,0.45);
       ctx.lineWidth=Math.max(1, cs*0.06);
-      ctx.shadowColor=`rgb(${cr},${cg},${cb})`; ctx.shadowBlur=10;
+      ctx.shadowColor=rgba(h,1); ctx.shadowBlur=10;
       roundRect(x,y,s,s,rad); ctx.stroke();
       ctx.restore();
     }
@@ -795,11 +828,19 @@
     $('trails').checked=State.trails;
     $('mode-pulse').classList.toggle('active', State.mode==='pulse');
     $('mode-sweep').classList.toggle('active', State.mode==='sweep');
+    syncCustomInputs();
+  }
+  function syncCustomInputs(){
+    const c=State.custom;
+    $('col-bg').value=normHex(c.bg); $('col-live').value=normHex(c.live);
+    $('col-dying').value=normHex(c.dying); $('col-dead').value=normHex(c.dead);
+    $('col-hover').value=normHex(c.hover);
   }
   function applyTheme(){
-    const th=THEMES[State.theme];
-    document.documentElement.style.setProperty('--accent', th.accent);
-    document.documentElement.style.setProperty('--dim', th.dim);
+    const p=palette();
+    document.documentElement.style.setProperty('--accent', p.accent);
+    document.documentElement.style.setProperty('--dim', p.dim);
+    $('custom-colors').style.display = State.theme==='custom' ? 'flex' : 'none';
   }
   function setTool(name){
     State.tool=name;
@@ -829,8 +870,20 @@
   $('trigger').addEventListener('change', e=>State.trigger=e.target.value);
   $('reverb').addEventListener('input', e=>{ State.reverb=+e.target.value; if(reverbGain) reverbGain.gain.value=State.reverb; });
   $('volume').addEventListener('input', e=>{ State.volume=+e.target.value; if(masterGain) masterGain.gain.value=State.volume; });
-  $('theme').addEventListener('change', e=>{ State.theme=e.target.value; applyTheme(); });
+  $('theme').addEventListener('change', e=>{
+    const prev=State.theme; State.theme=e.target.value;
+    // Seed custom pickers from the theme they came from, so it's a sensible starting point.
+    if(State.theme==='custom' && prev!=='custom'){
+      const th=THEMES[prev]||THEMES.green;
+      State.custom={ bg:normHex(th.bg), live:rgbToHex(th.cell), dying:rgbToHex(th.cell), dead:normHex(th.grid), hover:rgbToHex(th.cell) };
+      saveCustom(); syncCustomInputs();
+    }
+    applyTheme();
+  });
   $('trails').addEventListener('change', e=>State.trails=e.target.checked);
+  [['col-bg','bg'],['col-live','live'],['col-dying','dying'],['col-dead','dead'],['col-hover','hover']].forEach(([id,key])=>{
+    $(id).addEventListener('input', e=>{ State.custom[key]=e.target.value; saveCustom(); if(State.theme==='custom') applyTheme(); });
+  });
   ['paint','erase','blinker','pulsar','glider','glidergun'].forEach(t=>
     $('tool-'+t).addEventListener('click', ()=>setTool(t)));
 
@@ -876,6 +929,7 @@
   }
 
   function boot(){
+    loadCustom();
     if(location.hash.length>1){
       try{ applyDecoded(AL.decodeState(location.hash.slice(1))); }
       catch(e){ seedDefault(); }
