@@ -519,7 +519,10 @@
              playheadStr:th.playhead, accent:th.accent, dim:th.dim };
   }
 
-  function loadCustom(){ try{ const c=JSON.parse(localStorage.getItem('aurallife.custom')||'null'); if(c) Object.assign(State.custom, c); }catch(e){} }
+  // Once the palette has been seeded/edited/loaded, never auto-seed again (that would
+  // clobber the user's colors when toggling custom <-> preset).
+  let customSeeded=false;
+  function loadCustom(){ try{ const c=JSON.parse(localStorage.getItem('aurallife.custom')||'null'); if(c){ Object.assign(State.custom, c); customSeeded=true; } }catch(e){} }
   function saveCustom(){ try{ localStorage.setItem('aurallife.custom', JSON.stringify(State.custom)); }catch(e){} }
 
   // ---------- custom stamps (name -> [[x,y],...], normalized to origin) ----------
@@ -931,7 +934,7 @@
       cols:d.cols, rows:d.rows, grid:d.grid, mode:d.mode, bpm:d.bpm,
       scaleId:d.scaleId, root:d.root, snap:d.snap, voice:d.voice, theme:d.theme, trigger:d.trigger
     });
-    if(d.custom){ Object.assign(State.custom, d.custom); saveCustom(); }
+    if(d.custom){ Object.assign(State.custom, d.custom); customSeeded=true; saveCustom(); }
     if(d.customVoice){ Object.assign(State.customVoice, d.customVoice); saveCustomVoice(); }
     if(resized){ heat=new Float32Array(State.cols*State.rows); ghost=new Float32Array(State.cols*State.rows); }
     simGrid=State.grid.slice(); simPlay=0; State.playhead=0; visualQueue.length=0;
@@ -1042,16 +1045,16 @@
   $('theme').addEventListener('change', e=>{
     const prev=State.theme; State.theme=e.target.value;
     // Seed custom pickers from the theme they came from, so it's a sensible starting point.
-    if(State.theme==='custom' && prev!=='custom'){
+    if(State.theme==='custom' && prev!=='custom' && !customSeeded){
       const th=THEMES[prev]||THEMES.green;
       State.custom={ bg:normHex(th.bg), live:rgbToHex(th.cell), dying:rgbToHex(th.cell), dead:normHex(th.grid), hover:rgbToHex(th.cell) };
-      saveCustom(); syncCustomInputs();
+      customSeeded=true; saveCustom(); syncCustomInputs();
     }
     applyTheme();
   });
   $('trails').addEventListener('change', e=>State.trails=e.target.checked);
   [['col-bg','bg'],['col-live','live'],['col-dying','dying'],['col-dead','dead'],['col-hover','hover']].forEach(([id,key])=>{
-    $(id).addEventListener('input', e=>{ State.custom[key]=e.target.value; saveCustom(); if(State.theme==='custom') applyTheme(); });
+    $(id).addEventListener('input', e=>{ State.custom[key]=e.target.value; customSeeded=true; saveCustom(); if(State.theme==='custom') applyTheme(); });
   });
   ['paint','erase','block','blinker','pulsar','glider','glidergun'].forEach(t=>
     $('tool-'+t).addEventListener('click', ()=>setTool(t)));
