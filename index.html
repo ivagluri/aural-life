@@ -73,6 +73,8 @@
   a{ color:var(--accent); }
   .swatch{ display:flex; align-items:center; gap:5px; color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.5px; }
   input[type=color]{ width:26px; height:22px; padding:0; border:1px solid #1c2a1c; border-radius:4px; background:#0a0f0a; cursor:pointer; }
+  input[type=range].mini{ width:66px; }
+  .swatch select{ padding:3px 6px; }
 </style>
 </head>
 <body>
@@ -142,11 +144,26 @@
           <option value="pad">pad</option>
           <option value="pluck">pluck</option>
           <option value="sine">sine</option>
+          <option value="custom">custom…</option>
         </select>
         <select id="trigger">
           <option value="newborn">newborn</option>
           <option value="live">all live</option>
         </select>
+      </div>
+      <div class="row" id="custom-voice" style="display:none">
+        <label class="swatch">wave
+          <select id="cv-wave">
+            <option value="sine">sine</option>
+            <option value="triangle">triangle</option>
+            <option value="square">square</option>
+            <option value="sawtooth">saw</option>
+          </select>
+        </label>
+        <label class="swatch">bell<input type="range" class="mini" id="cv-fm" min="0" max="1" step="0.01"></label>
+        <label class="swatch">bright<input type="range" class="mini" id="cv-bright" min="0" max="1" step="0.01"></label>
+        <label class="swatch">attack<input type="range" class="mini" id="cv-attack" min="0" max="1" step="0.01"></label>
+        <label class="swatch">length<input type="range" class="mini" id="cv-length" min="0" max="1" step="0.01"></label>
       </div>
     </div>
 
@@ -354,6 +371,10 @@
       const c=s.custom, hx=h=>String(h||'').replace('#','');
       parts.push('cc='+[hx(c.bg),hx(c.live),hx(c.dying),hx(c.dead),hx(c.hover)].join('-'));
     }
+    if(s.customVoice && s.voice==='custom'){
+      const v=s.customVoice;
+      parts.push('cv='+[v.wave, v.fm, v.bright, v.attack, v.length].join('-'));
+    }
     return parts.join('&');
   }
   function decodeState(str){
@@ -369,6 +390,11 @@
       const p=q.cc.split('-');
       if(p.length===5) custom={ bg:'#'+p[0], live:'#'+p[1], dying:'#'+p[2], dead:'#'+p[3], hover:'#'+p[4] };
     }
+    let customVoice=null;
+    if(q.cv){
+      const p=q.cv.split('-');
+      if(p.length===5) customVoice={ wave:p[0], fm:+p[1], bright:+p[2], attack:+p[3], length:+p[4] };
+    }
     return {
       grid: unpackGrid(q.p||'', cols*rows),
       cols, rows,
@@ -380,7 +406,7 @@
       voice: q.v||'bell',
       theme: q.t||'green',
       trigger: q.trig||'newborn',
-      custom
+      custom, customVoice
     };
   }
 
@@ -455,6 +481,8 @@
     voice:'pluck', trigger:'newborn',
     reverb:0.35, volume:0.7, theme:'green', trails:true,
     custom:{ bg:'#000000', live:'#39ff14', dying:'#2a7d18', dead:'#0a1a0a', hover:'#39ff14' },
+    // custom voice params (all 0..1 except wave): fm=bell amount, bright=filter cutoff
+    customVoice:{ wave:'triangle', fm:0, bright:0.7, attack:0.1, length:0.5 },
     tool:'paint', running:false, playhead:0
   };
   State.grid = AL.makeGrid(State.cols, State.rows);
@@ -523,6 +551,24 @@
     sine:  {type:'simple', wave:'sine', attack:0.012, dur:1.05, gain:0.26}
   };
 
+  // Build a voice config from the 5 custom-voice sliders. Spans the presets'
+  // territory (sine/pluck/pad-ish, plus bell via FM) and everything between.
+  function customCfg(){
+    const v=State.customVoice;
+    const cfg={
+      attack: 0.002 + v.attack*v.attack*0.6,   // ~2ms .. ~0.6s
+      dur:    0.12  + v.length*v.length*3.0,    // ~0.12s .. ~3.1s
+      cutoff: 180 * Math.pow(120, v.bright),    // ~180Hz (dark) .. ~21.6kHz (bright)
+      gain:   0.32,
+      wave:   v.wave
+    };
+    if(v.fm>0){ cfg.type='fm'; cfg.ratio=2.0; cfg.modIndex=v.fm*260; cfg.modDecay=0.4; }
+    else cfg.type='simple';
+    return cfg;
+  }
+  function loadCustomVoice(){ try{ const v=JSON.parse(localStorage.getItem('aurallife.voice')||'null'); if(v) Object.assign(State.customVoice, v); }catch(e){} }
+  function saveCustomVoice(){ try{ localStorage.setItem('aurallife.voice', JSON.stringify(State.customVoice)); }catch(e){} }
+
   // tanh soft-clip curve: near-linear for small signals, smoothly saturating past
   // unity (full scale maps to ~0.76, giving headroom). Prevents hard digital clipping.
   function makeSoftClip(k){
@@ -569,20 +615,27 @@
 
   function trigger(freq, when, vel){
     if(!actx) return;
-    const cfg=VOICES[State.voice];
+    const cfg = State.voice==='custom' ? customCfg() : VOICES[State.voice];
     const g=actx.createGain();
-    let out=g;
+    let node=g;
+    // optional lowpass (brightness) — only custom voice sets cfg.cutoff
+    if(cfg.cutoff){
+      const f=actx.createBiquadFilter(); f.type='lowpass';
+      f.frequency.value=cfg.cutoff; f.Q.value=0.7;
+      node.connect(f); node=f;
+    }
+    let out=node;
     if(actx.createStereoPanner){
       const p=actx.createStereoPanner();
       p.pan.value = arguments.length>3 ? arguments[3] : 0;
-      g.connect(p); out=p;
+      node.connect(p); out=p;
     }
     out.connect(dryGain); out.connect(convolver);
 
     const t=when, end=t+cfg.dur+(cfg.release||0);
     const oscs=[];
     if(cfg.type==='fm'){
-      const carrier=actx.createOscillator(); carrier.type='sine'; carrier.frequency.value=freq;
+      const carrier=actx.createOscillator(); carrier.type=cfg.wave||'sine'; carrier.frequency.value=freq;
       const mod=actx.createOscillator(); mod.type='sine'; mod.frequency.value=freq*cfg.ratio;
       const modGain=actx.createGain();
       // Envelope the modulation depth: bright at the onset, then settles — avoids the
@@ -877,6 +930,7 @@
       scaleId:d.scaleId, root:d.root, snap:d.snap, voice:d.voice, theme:d.theme, trigger:d.trigger
     });
     if(d.custom){ Object.assign(State.custom, d.custom); saveCustom(); }
+    if(d.customVoice){ Object.assign(State.customVoice, d.customVoice); saveCustomVoice(); }
     if(resized){ heat=new Float32Array(State.cols*State.rows); ghost=new Float32Array(State.cols*State.rows); }
     simGrid=State.grid.slice(); simPlay=0; State.playhead=0; visualQueue.length=0;
     syncControls(); applyTheme();
@@ -915,13 +969,19 @@
     $('trails').checked=State.trails;
     $('mode-pulse').classList.toggle('active', State.mode==='pulse');
     $('mode-sweep').classList.toggle('active', State.mode==='sweep');
-    syncCustomInputs();
+    syncCustomInputs(); syncVoiceInputs();
   }
   function syncCustomInputs(){
     const c=State.custom;
     $('col-bg').value=normHex(c.bg); $('col-live').value=normHex(c.live);
     $('col-dying').value=normHex(c.dying); $('col-dead').value=normHex(c.dead);
     $('col-hover').value=normHex(c.hover);
+  }
+  function syncVoiceInputs(){
+    const v=State.customVoice;
+    $('cv-wave').value=v.wave; $('cv-fm').value=v.fm; $('cv-bright').value=v.bright;
+    $('cv-attack').value=v.attack; $('cv-length').value=v.length;
+    $('custom-voice').style.display = State.voice==='custom' ? 'flex' : 'none';
   }
   function applyTheme(){
     const p=palette();
@@ -969,8 +1029,12 @@
   $('scale').addEventListener('change', e=>State.scaleId=e.target.value);
   $('root').addEventListener('change', e=>State.root=+e.target.value);
   $('snap').addEventListener('change', e=>State.snap=e.target.checked);
-  $('voice').addEventListener('change', e=>State.voice=e.target.value);
+  $('voice').addEventListener('change', e=>{ State.voice=e.target.value; syncVoiceInputs(); });
   $('trigger').addEventListener('change', e=>State.trigger=e.target.value);
+  $('cv-wave').addEventListener('change', e=>{ State.customVoice.wave=e.target.value; saveCustomVoice(); });
+  [['cv-fm','fm'],['cv-bright','bright'],['cv-attack','attack'],['cv-length','length']].forEach(([id,key])=>{
+    $(id).addEventListener('input', e=>{ State.customVoice[key]=+e.target.value; saveCustomVoice(); });
+  });
   $('reverb').addEventListener('input', e=>{ State.reverb=+e.target.value; if(reverbGain) reverbGain.gain.value=State.reverb; });
   $('volume').addEventListener('input', e=>{ State.volume=+e.target.value; if(masterGain) masterGain.gain.value=State.volume; });
   $('theme').addEventListener('change', e=>{
@@ -1070,7 +1134,7 @@
   }
 
   function boot(){
-    loadCustom(); loadStamps();
+    loadCustom(); loadCustomVoice(); loadStamps();
     const hash=location.hash.slice(1);
     // A shared stamp link (#stamp=<code>) imports into the library. Extract it raw
     // (undecoded) so decodeStamp does the single decodeURIComponent itself.

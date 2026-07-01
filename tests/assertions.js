@@ -98,6 +98,20 @@
       checks.push('encode/decode round-trips pattern + settings + custom palette');
     })();
 
+    // --- Persistence: custom voice round-trips only when voice is custom ---
+    (function () {
+      var cv = { wave: 'sawtooth', fm: 0.42, bright: 0.8, attack: 0.15, length: 0.6 };
+      var base = { grid: AL.makeGrid(4, 4), cols: 4, rows: 4, mode: 'pulse', bpm: 100,
+        scaleId: 'majpent', root: 0, snap: false, theme: 'green', trigger: 'newborn' };
+      var withV = AL.decodeState(AL.encodeState(Object.assign({}, base, { voice: 'custom', customVoice: cv })));
+      ok(withV.customVoice && withV.customVoice.wave === 'sawtooth' && withV.customVoice.fm === 0.42 &&
+         withV.customVoice.bright === 0.8 && withV.customVoice.attack === 0.15 && withV.customVoice.length === 0.6,
+         'custom voice round-trips');
+      var noV = AL.decodeState(AL.encodeState(Object.assign({}, base, { voice: 'bell', customVoice: cv })));
+      ok(noV.customVoice === null, 'custom voice omitted when voice is a preset');
+      checks.push('custom voice round-trips (only when active)');
+    })();
+
     // --- Shareable stamps: encode/decode round-trips cells + name ---
     (function () {
       var cells = [[0, 0], [2, 0], [1, 1], [0, 2], [4, 3]]; // arbitrary shape, w=5 h=4
