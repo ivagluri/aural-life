@@ -72,6 +72,10 @@
     transition:.25s; box-shadow:0 0 16px rgba(57,255,20,.3); z-index:10;
   }
   #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+  body.zen{ padding:0; justify-content:center; }
+  body.zen h1, body.zen .panel, body.zen .hint{ display:none; }
+  body.zen .stage{ max-width:none; }
+  body.zen canvas{ border:none; border-radius:0; margin:0 auto; }
   a{ color:var(--accent); }
   .swatch{ display:flex; align-items:center; gap:5px; color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.5px; }
   input[type=color]{ width:26px; height:22px; padding:0; border:1px solid #1c2a1c; border-radius:4px; background:#0a0f0a; cursor:pointer; }
@@ -94,6 +98,7 @@
         <button id="step" class="wide">step</button>
         <button id="random" class="wide">random</button>
         <button id="clear" class="wide">clear</button>
+        <button id="zen" title="zen mode: hide the panel, fill the window (z / esc)">zen</button>
       </div>
     </div>
 
@@ -104,6 +109,16 @@
         <button id="mode-pulse" class="wide active">pulse</button>
         <button id="mode-sweep" class="wide">sweep</button>
         <button id="sweep-dir" title="sweep direction">→</button>
+      </div>
+      <div class="row">
+        <select id="rule" title="cellular automaton rule">
+          <option value="life">life (B3/S23)</option>
+          <option value="highlife">highlife (B36/S23)</option>
+          <option value="seeds">seeds (B2/S)</option>
+          <option value="daynight">day &amp; night</option>
+          <option value="nodeath">no death</option>
+        </select>
+        <label class="chk" title="occasionally drop a random cell so the sim never dies out"><input type="checkbox" id="rain"> rain</label>
       </div>
     </div>
 
@@ -156,6 +171,7 @@
           <option value="newborn">newborn</option>
           <option value="live">all live</option>
         </select>
+        <label class="chk" title="dying cells sound a dark low tone"><input type="checkbox" id="deaths"> deaths</label>
       </div>
       <div class="row" id="custom-voice" style="display:none">
         <label class="swatch">wave
@@ -179,6 +195,8 @@
       <div class="row">
         <span class="val" style="min-width:0">rev</span>
         <input type="range" id="reverb" min="0" max="1" step="0.01" value="0.35">
+        <span class="val" style="min-width:0">echo</span>
+        <input type="range" id="echo" min="0" max="1" step="0.01" value="0" title="tempo-synced echo">
         <span class="val" style="min-width:0">vol</span>
         <input type="range" id="volume" min="0" max="1" step="0.01" value="0.7">
       </div>
@@ -198,6 +216,7 @@
           <option value="custom">custom…</option>
         </select>
         <label class="chk"><input type="checkbox" id="trails" checked> trails</label>
+        <label class="chk" title="slowly cycle the colors, lava-lamp style"><input type="checkbox" id="drift"> drift</label>
       </div>
       <div class="row" id="custom-colors" style="display:none">
         <label class="swatch">bg<input type="color" id="col-bg"></label>
@@ -220,6 +239,13 @@
         <button id="tool-pulsar">pulsar</button>
         <button id="tool-glider">glider</button>
         <button id="tool-glidergun">gun</button>
+      </div>
+      <div class="row">
+        <span class="val" style="min-width:0" title="mirror painting and stamps">sym</span>
+        <button id="sym-off" class="active">off</button>
+        <button id="sym-h" title="mirror left-right">↔</button>
+        <button id="sym-v" title="mirror top-bottom">↕</button>
+        <button id="sym-quad" title="mirror both ways">✚</button>
       </div>
       <div class="row">
         <button id="save-stamp">save grid as stamp</button>
@@ -251,7 +277,10 @@
     Click / drag the grid to draw cells, or pick a <b>stamp</b> and click to place a pattern.
     Press <b>play</b> (or <kbd>space</kbd>). <b>Pulse</b> = each generation is a beat;
     <b>sweep</b> = a playhead scans columns (<b>→/←</b> reverses it, even mid-play). Repeating patterns (pulsar, blinker) become
-    musical loops — a <b>gun</b> becomes an evolving stream. Keys: space=play · s=step · c=clear · r=random.
+    musical loops — a <b>gun</b> becomes an evolving stream. Try another <b>rule</b> (seeds crackles, no-death drones),
+    <b>rain</b> to keep it alive forever, <b>sym</b> for kaleidoscope drawing, <b>drift</b> for lava-lamp colors,
+    and <b>zen</b> for a full-window screensaver that reseeds itself.
+    Keys: space=play · s=step · c=clear · r=random · z=zen.
   </div>
 
   <div id="toast"></div>
@@ -265,7 +294,17 @@
 (function(root){
   "use strict";
 
-  // ---- Game of Life engine (B3/S23, toroidal wrap) ----
+  // ---- Cellular automaton engine (toroidal wrap) ----
+  // Rules are birth/survival neighbor counts. Classic Life (B3/S23) is the
+  // default; the others are well-known variants with very different characters.
+  const RULES = {
+    life:    { b:[3],       s:[2,3] },
+    highlife:{ b:[3,6],     s:[2,3] },
+    seeds:   { b:[2],       s:[] },                    // everything dies each gen
+    daynight:{ b:[3,6,7,8], s:[3,4,6,7,8] },
+    nodeath: { b:[3],       s:[0,1,2,3,4,5,6,7,8] }    // life without death
+  };
+
   function makeGrid(cols, rows){ return new Uint8Array(cols*rows); }
 
   function neighbors(g, cols, rows, c, r){
@@ -281,21 +320,28 @@
     return n;
   }
 
-  // Returns { grid: next generation, born: indices that were dead and are now alive }
-  function step(g, cols, rows){
+  // Returns { grid: next generation, born: indices that were dead and are now
+  // alive, died: indices that were alive and are now dead }. `rule` is optional
+  // (defaults to classic Life) so existing callers/links keep working.
+  function step(g, cols, rows, rule){
+    rule = rule || RULES.life;
+    const B=new Uint8Array(9), S=new Uint8Array(9);
+    for(const n of rule.b) B[n]=1;
+    for(const n of rule.s) S[n]=1;
     const next = new Uint8Array(cols*rows);
-    const born = [];
+    const born = [], died = [];
     for(let r=0; r<rows; r++){
       for(let c=0; c<cols; c++){
         const i=r*cols+c;
         const n=neighbors(g, cols, rows, c, r);
         const alive=g[i];
-        const now = alive ? (n===2 || n===3 ? 1 : 0) : (n===3 ? 1 : 0);
+        const now = alive ? S[n] : B[n];
         next[i]=now;
         if(now && !alive) born.push(i);
+        else if(!now && alive) died.push(i);
       }
     }
-    return { grid: next, born: born };
+    return { grid: next, born: born, died: died };
   }
 
   // ---- Music: row -> pitch ----
@@ -381,6 +427,8 @@
       'v='+s.voice, 't='+s.theme, 'trig='+s.trigger
     ];
     if(s.sweepDir===-1) parts.push('dir=-1'); // omitted = forward, keeps old links valid
+    if(s.ruleId && s.ruleId!=='life' && RULES[s.ruleId]) parts.push('rule='+s.ruleId); // omitted = classic life
+    if(s.rain) parts.push('rain=1');
     if(s.custom && s.theme==='custom'){
       const c=s.custom, hx=h=>String(h||'').replace('#','');
       parts.push('cc='+[hx(c.bg),hx(c.live),hx(c.dying),hx(c.hover)].join('-'));
@@ -416,6 +464,8 @@
       cols, rows,
       mode: q.m||'pulse',
       sweepDir: q.dir==='-1' ? -1 : 1,
+      ruleId: RULES[q.rule] ? q.rule : 'life',
+      rain: q.rain==='1',
       bpm: +q.bpm||100,
       scaleId: q.s||'majpent',
       root: +q.root||0,
@@ -472,7 +522,7 @@
   };
 
   root.AuralLife = {
-    makeGrid, neighbors, step,
+    makeGrid, neighbors, step, RULES,
     SCALES, BASE_MIDI, rowToMidi, midiToFreq, rowToFreq, snapToScale,
     packGrid, unpackGrid, encodeState, decodeState,
     encodeStamp, decodeStamp,
@@ -495,9 +545,11 @@
   const State = {
     cols:48, rows:24,
     grid:null, mode:'pulse', sweepDir:1, bpm:100,
+    ruleId:'life', rain:false,
     scaleId:'majpent', root:0, snap:false,
-    voice:'pluck', trigger:'newborn',
-    reverb:0.35, volume:0.7, theme:'green', trails:true,
+    voice:'pluck', trigger:'newborn', deathVoice:false,
+    reverb:0.35, echo:0, volume:0.7, theme:'green', trails:true, drift:false,
+    symmetry:'off', zen:false,
     custom:{ bg:'#000000', live:'#39ff14', dying:'#2a7d18', hover:'#39ff14' },
     // custom voice params (all 0..1 except wave): fm=bell amount, bright=filter cutoff
     customVoice:{ wave:'triangle', fm:0, bright:0.7, attack:0.1, length:0.5 },
@@ -522,6 +574,24 @@
   function hexToRgb(h){ h=normHex(h); return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; }
   function rgbToHex(a){ return '#'+a.map(v=>Math.max(0,Math.min(255,v|0)).toString(16).padStart(2,'0')).join(''); }
   function rgba(a,al){ return `rgba(${a[0]},${a[1]},${a[2]},${al})`; }
+  // Rotate an [r,g,b] color's hue by deg (via HSL), preserving saturation/lightness.
+  function rotateHue(rgb, deg){
+    const r=rgb[0]/255, g=rgb[1]/255, b=rgb[2]/255;
+    const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min, l=(max+min)/2;
+    const s = d===0 ? 0 : d/(1-Math.abs(2*l-1));
+    let h=0;
+    if(d!==0){
+      if(max===r) h=((g-b)/d+6)%6; else if(max===g) h=(b-r)/d+2; else h=(r-g)/d+4;
+      h*=60;
+    }
+    h=(h+deg%360+360)%360;
+    const c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2;
+    const seg=[[c,x,0],[x,c,0],[0,c,x],[0,x,c],[x,0,c],[c,0,x]][Math.floor(h/60)%6];
+    return [Math.round((seg[0]+m)*255), Math.round((seg[1]+m)*255), Math.round((seg[2]+m)*255)];
+  }
+  // Lava-lamp drift: one slow full hue cycle every ~75s.
+  function driftDeg(){ return (performance.now()/75000)*360 % 360; }
+
   // Grid lines: a faint nudge off the background (lighten dark bgs, darken light ones).
   function gridFromBg(bg){
     const [r,g,b]=hexToRgb(bg), d = (0.299*r+0.587*g+0.114*b) < 128 ? 20 : -20;
@@ -569,6 +639,7 @@
 
   // ---------- audio ----------
   let actx=null, masterGain, limiter, dryGain, reverbGain, convolver;
+  let echoDelay, echoSend, echoFeedback;
   let voices=[]; const MAX_VOICES=28, MAX_PER_STEP=16;
 
   const VOICES = {
@@ -577,6 +648,8 @@
     pluck: {type:'simple', wave:'triangle', attack:0.004, dur:0.45, gain:0.30},
     sine:  {type:'simple', wave:'sine', attack:0.012, dur:1.05, gain:0.26}
   };
+  // Dying cells (when enabled) sound this: dark, quiet, an octave down.
+  const DEATH_CFG = {type:'simple', wave:'sine', attack:0.015, dur:0.8, gain:0.22, cutoff:900};
 
   // Build a voice config from the 5 custom-voice sliders. Spans the presets'
   // territory (sine/pluck/pad-ish, plus bell via FM) and everything between.
@@ -621,6 +694,9 @@
     return buf;
   }
 
+  // Echo lands on the dotted eighth — the classic "sequencer delay" spacing.
+  function echoTime(){ return Math.min(2, (60/State.bpm)*0.75); }
+
   function initAudio(){
     if(actx) { if(actx.state==='suspended') actx.resume(); return; }
     actx = new (window.AudioContext||window.webkitAudioContext)();
@@ -636,13 +712,22 @@
     convolver=actx.createConvolver(); convolver.buffer=makeImpulse(2.6, 2.4);
     dryGain.connect(limiter);
     convolver.connect(reverbGain); reverbGain.connect(limiter);
+    // Tempo-synced echo: dry tap -> send -> delay (dotted eighth) -> out, with a
+    // darkened feedback loop so repeats decay in tone as well as level.
+    echoDelay=actx.createDelay(2.0); echoDelay.delayTime.value=echoTime();
+    echoSend=actx.createGain(); echoSend.gain.value=State.echo;
+    echoFeedback=actx.createGain(); echoFeedback.gain.value=State.echo*0.65;
+    const echoTone=actx.createBiquadFilter(); echoTone.type='lowpass'; echoTone.frequency.value=2500;
+    dryGain.connect(echoSend); echoSend.connect(echoDelay);
+    echoDelay.connect(echoTone); echoTone.connect(echoFeedback); echoFeedback.connect(echoDelay);
+    echoDelay.connect(limiter);
     // voices -> comp -> soft-clip -> master volume -> out
     limiter.connect(shaper); shaper.connect(masterGain); masterGain.connect(actx.destination);
   }
 
-  function trigger(freq, when, vel){
+  function trigger(freq, when, vel, pan, cfgOverride){
     if(!actx) return;
-    const cfg = State.voice==='custom' ? customCfg() : VOICES[State.voice];
+    const cfg = cfgOverride || (State.voice==='custom' ? customCfg() : VOICES[State.voice]);
     const g=actx.createGain();
     let node=g;
     // optional lowpass (brightness) — only custom voice sets cfg.cutoff
@@ -654,7 +739,7 @@
     let out=node;
     if(actx.createStereoPanner){
       const p=actx.createStereoPanner();
-      p.pan.value = arguments.length>3 ? arguments[3] : 0;
+      p.pan.value = pan||0;
       node.connect(p); out=p;
     }
     out.connect(dryGain); out.connect(convolver);
@@ -733,6 +818,51 @@
       trigger(cellFreq(r), time+jitter, vel, pan);
     }
   }
+  // Dying cells: same placement in the stereo field, but an octave down, dark and quiet.
+  function soundDeaths(cells, time){
+    if(!State.deathVoice || !cells.length) return;
+    const list=cap(cells);
+    const level=Math.min(1, 1.5/Math.sqrt(list.length));
+    for(const i of list){
+      const r=Math.floor(i/State.cols), c=i%State.cols;
+      const pan=((c/(State.cols-1))*2-1)*0.7;
+      trigger(cellFreq(r)/2, time+Math.random()*0.02, 0.3*level, pan, DEATH_CFG);
+    }
+  }
+
+  const rule = ()=> AL.RULES[State.ruleId] || AL.RULES.life;
+
+  // Rain: keep the sim alive by trickling random cells in — always when the
+  // population runs low, occasionally otherwise. Mutates g, returns the drops.
+  function rainInto(g){
+    let pop=0; for(let i=0;i<g.length;i++) pop+=g[i];
+    if(pop >= g.length*0.03 && Math.random()>0.04) return [];
+    const drops=[], n = Math.random()<0.3 ? 3 : 1;
+    for(let k=0;k<n;k++){
+      for(let tries=0;tries<20;tries++){
+        const i=(Math.random()*g.length)|0;
+        if(!g[i]){ g[i]=1; drops.push(i); break; }
+      }
+    }
+    return drops;
+  }
+
+  // Zen-mode stagnation watch: when the grid settles into a still life / short
+  // loop (or empties out), fade to a fresh random seed so it never goes stale.
+  let genHistory=[], stagnant=0;
+  function resetStagnation(){ genHistory.length=0; stagnant=0; }
+  function checkStagnation(ng){
+    if(!State.zen){ resetStagnation(); return ng; }
+    const key=AL.packGrid(ng);
+    stagnant = genHistory.indexOf(key)>=0 ? stagnant+1 : 0;
+    genHistory.push(key); if(genHistory.length>16) genHistory.shift();
+    let pop=0; for(let i=0;i<ng.length;i++) pop+=ng[i];
+    if(stagnant < (pop===0 ? 8 : 24)) return ng;
+    resetStagnation();
+    const g=new Uint8Array(ng.length);
+    for(let i=0;i<g.length;i++) g[i] = Math.random()<0.18 ? 1 : 0;
+    return g;
+  }
 
   // ---------- lookahead scheduler ("two clocks") ----------
   const LOOKAHEAD_MS=25, SCHEDULE_AHEAD=0.12;
@@ -747,11 +877,16 @@
 
   function scheduleStep(time){
     if(State.mode==='pulse'){
-      const {grid:ng, born}=AL.step(simGrid, State.cols, State.rows);
-      const sounded = State.trigger==='newborn' ? born : liveCells(ng);
+      let {grid:ng, born, died}=AL.step(simGrid, State.cols, State.rows, rule());
+      let drops = State.rain ? rainInto(ng) : [];
+      const fresh=checkStagnation(ng);
+      if(fresh!==ng){ ng=fresh; born=[]; died=[]; drops=[]; } // reseed: silent transition
+      const newCells = drops.length ? born.concat(drops) : born;
+      const sounded = State.trigger==='newborn' ? newCells : liveCells(ng);
       soundCells(sounded, time);
+      soundDeaths(died, time);
       simGrid=ng;
-      visualQueue.push({time, kind:'setGrid', grid:ng, sounded:born});
+      visualQueue.push({time, kind:'setGrid', grid:ng, sounded:newCells});
     } else {
       const col=simPlay, cells=[];
       for(let r=0;r<State.rows;r++){ const i=r*State.cols+col; if(simGrid[i]) cells.push(i); }
@@ -760,9 +895,13 @@
       simPlay+=State.sweepDir;
       if(simPlay>=State.cols || simPlay<0){
         simPlay=sweepStart();
-        const {grid:ng}=AL.step(simGrid, State.cols, State.rows);
+        let {grid:ng, died}=AL.step(simGrid, State.cols, State.rows, rule());
+        let drops = State.rain ? rainInto(ng) : [];
+        const fresh=checkStagnation(ng);
+        if(fresh!==ng){ ng=fresh; died=[]; drops=[]; }
+        soundDeaths(died, time);
         simGrid=ng;
-        visualQueue.push({time:time+0.0005, kind:'setGrid', grid:ng, sounded:[]});
+        visualQueue.push({time:time+0.0005, kind:'setGrid', grid:ng, sounded:drops});
       }
     }
   }
@@ -793,9 +932,10 @@
   function stepOnce(){
     initAudio();
     const t=actx ? actx.currentTime+0.02 : 0;
-    const {grid:ng, born}=AL.step(State.grid, State.cols, State.rows);
+    const {grid:ng, born, died}=AL.step(State.grid, State.cols, State.rows, rule());
     const sounded = State.trigger==='newborn' ? born : liveCells(ng);
     soundCells(sounded, t);
+    soundDeaths(died, t);
     updateGhosts(State.grid, ng);
     State.grid=ng; simGrid=ng.slice();
     for(const i of born) heat[i]=1;
@@ -822,8 +962,11 @@
 
   function resizeCanvas(){
     const stage=canvas.parentElement;
-    const cssW=Math.max(320, stage.clientWidth);
+    let cssW=Math.max(320, stage.clientWidth);
+    // zen: fit the whole grid inside the window (width- or height-limited)
+    if(State.zen) cssW=Math.min(cssW, window.innerHeight/State.rows*State.cols);
     cs=cssW/State.cols;
+    canvas.style.width=cssW+'px';
     const cssH=cs*State.rows;
     dpr=window.devicePixelRatio||1;
     canvas.style.height=cssH+'px';
@@ -832,8 +975,20 @@
     ctx.setTransform(dpr,0,0,dpr,0,0);
   }
 
+  // The palette as drawn this frame: the resolved theme, hue-rotated when drifting.
+  function drawPalette(){
+    const p=palette();
+    if(!State.drift) return p;
+    const deg=driftDeg();
+    const live=rotateHue(p.live,deg);
+    return Object.assign({}, p, {
+      live, dying:rotateHue(p.dying,deg), hover:rotateHue(p.hover,deg),
+      playheadStr:rgba(live,0.18)
+    });
+  }
+
   function draw(){
-    const p=palette(), W=State.cols*cs, H=State.rows*cs;
+    const p=drawPalette(), W=State.cols*cs, H=State.rows*cs;
     ctx.fillStyle=p.bg; ctx.fillRect(0,0,W,H);
 
     // grid lines (faint, derived from the background)
@@ -870,7 +1025,7 @@
     // footprint of the active stamp so you can see exactly what it will place.
     if(hover.on && hover.c>=0 && hover.r>=0){
       const h=p.hover;
-      const targets = isStampTool() ? stampCells(State.tool, hover.c, hover.r) : [[hover.c, hover.r]];
+      const targets = withSymmetry(isStampTool() ? stampCells(State.tool, hover.c, hover.r) : [[hover.c, hover.r]]);
       ctx.save();
       ctx.strokeStyle=rgba(h,0.45);
       ctx.lineWidth=Math.max(1, cs*0.06);
@@ -899,9 +1054,15 @@
       else if(ev.kind==='playhead'){ State.playhead=ev.col; for(const i of ev.sounded) heat[i]=1; }
     }
     for(let i=0;i<heat.length;i++){ if(heat[i]>0.001) heat[i]*=0.90; else heat[i]=0; }
+    // Drift the UI glow along with the cells (throttled: CSS var writes restyle the page).
+    if(State.drift && performance.now()-lastAccentSync>500){
+      lastAccentSync=performance.now();
+      document.documentElement.style.setProperty('--accent', rgbToHex(rotateHue(palette().live, driftDeg())));
+    }
     draw();
     requestAnimationFrame(tick);
   }
+  let lastAccentSync=0;
 
   // ---------- grid editing ----------
   function cellAt(e){
@@ -911,6 +1072,21 @@
     return {c:Math.max(0,Math.min(State.cols-1,c)), r:Math.max(0,Math.min(State.rows-1,r))};
   }
   function setCell(c,r,v){ const i=r*State.cols+c; State.grid[i]=v; if(v) heat[i]=1; }
+  // Expand cells with their mirror images per the symmetry mode (deduped).
+  // Used by paint, erase, stamps AND the hover preview, so they always agree.
+  function withSymmetry(cells){
+    if(State.symmetry==='off') return cells;
+    const seen={}, out=[];
+    const add=(c,r)=>{ const k=r*State.cols+c; if(!seen[k]){ seen[k]=1; out.push([c,r]); } };
+    for(const [c,r] of cells){
+      add(c,r);
+      const mc=State.cols-1-c, mr=State.rows-1-r;
+      if(State.symmetry!=='v') add(mc,r);
+      if(State.symmetry!=='h') add(c,mr);
+      if(State.symmetry==='quad') add(mc,mr);
+    }
+    return out;
+  }
   // Resolve a stamp's cells centered at (cx,cy), wrapped toroidally — shared by the
   // actual stamp and its hover preview so the outline matches exactly what gets placed.
   function stampCells(name,cx,cy){
@@ -922,11 +1098,12 @@
   }
   const isStampTool = ()=> State.tool!=='paint' && State.tool!=='erase';
   function stampPattern(name,cx,cy){
-    for(const [c,r] of stampCells(name,cx,cy)){
+    for(const [c,r] of withSymmetry(stampCells(name,cx,cy))){
       setCell(c,r,1);
     }
     commitEdit();
   }
+  function paintCell(c,r,v){ for(const [cc,rr] of withSymmetry([[c,r]])) setCell(cc,rr,v); }
 
   let painting=false, paintVal=1;
   canvas.addEventListener('pointerdown', e=>{
@@ -935,7 +1112,7 @@
     if(State.tool==='paint'||State.tool==='erase'){
       painting=true;
       paintVal = State.tool==='erase' ? 0 : (State.grid[r*State.cols+c] ? 0 : 1);
-      setCell(c,r,paintVal);
+      paintCell(c,r,paintVal);
     } else {
       stampPattern(State.tool, c, r);
     }
@@ -943,7 +1120,7 @@
   canvas.addEventListener('pointermove', e=>{
     const {c,r}=cellAt(e);
     hover.c=c; hover.r=r; hover.on=true;
-    if(painting) setCell(c,r,paintVal);
+    if(painting) paintCell(c,r,paintVal);
   });
   canvas.addEventListener('pointerleave', ()=>{ hover.on=false; });
   window.addEventListener('pointerup', ()=>{ if(painting){ painting=false; commitEdit(); } });
@@ -956,6 +1133,7 @@
     const resized = (d.cols!==State.cols || d.rows!==State.rows);
     Object.assign(State, {
       cols:d.cols, rows:d.rows, grid:d.grid, mode:d.mode, sweepDir:d.sweepDir||1, bpm:d.bpm,
+      ruleId:d.ruleId||'life', rain:!!d.rain,
       scaleId:d.scaleId, root:d.root, snap:d.snap, voice:d.voice, theme:d.theme, trigger:d.trigger
     });
     if(d.custom){ Object.assign(State.custom, d.custom); customSeeded=true; saveCustom(); }
@@ -992,10 +1170,12 @@
   // ---------- UI wiring ----------
   function syncControls(){
     $('bpm').value=State.bpm; $('bpm-val').textContent=State.bpm;
+    $('rule').value=State.ruleId; $('rain').checked=State.rain;
     $('scale').value=State.scaleId; $('root').value=State.root; $('snap').checked=State.snap;
-    $('voice').value=State.voice; $('trigger').value=State.trigger;
-    $('reverb').value=State.reverb; $('volume').value=State.volume; $('theme').value=State.theme;
-    $('trails').checked=State.trails;
+    $('voice').value=State.voice; $('trigger').value=State.trigger; $('deaths').checked=State.deathVoice;
+    $('reverb').value=State.reverb; $('echo').value=State.echo; $('volume').value=State.volume; $('theme').value=State.theme;
+    $('trails').checked=State.trails; $('drift').checked=State.drift;
+    ['off','h','v','quad'].forEach(s=> $('sym-'+s).classList.toggle('active', State.symmetry===s));
     $('mode-pulse').classList.toggle('active', State.mode==='pulse');
     $('mode-sweep').classList.toggle('active', State.mode==='sweep');
     $('sweep-dir').textContent = State.sweepDir>0 ? '→' : '←';
@@ -1056,17 +1236,27 @@
   $('mode-sweep').addEventListener('click', ()=>{ State.mode='sweep'; simPlay=sweepStart(); State.playhead=simPlay; syncControls(); });
   // flip mid-flight: the playhead keeps its position and walks back the other way
   $('sweep-dir').addEventListener('click', ()=>{ State.sweepDir*=-1; syncControls(); });
-  $('bpm').addEventListener('input', e=>{ State.bpm=+e.target.value; $('bpm-val').textContent=State.bpm; });
+  $('rule').addEventListener('change', e=>{ State.ruleId=e.target.value; commitEdit(); resetStagnation(); });
+  $('rain').addEventListener('change', e=>State.rain=e.target.checked);
+  $('bpm').addEventListener('input', e=>{
+    State.bpm=+e.target.value; $('bpm-val').textContent=State.bpm;
+    if(echoDelay) echoDelay.delayTime.setTargetAtTime(echoTime(), actx.currentTime, 0.05);
+  });
   $('scale').addEventListener('change', e=>State.scaleId=e.target.value);
   $('root').addEventListener('change', e=>State.root=+e.target.value);
   $('snap').addEventListener('change', e=>State.snap=e.target.checked);
   $('voice').addEventListener('change', e=>{ State.voice=e.target.value; syncVoiceInputs(); });
   $('trigger').addEventListener('change', e=>State.trigger=e.target.value);
+  $('deaths').addEventListener('change', e=>State.deathVoice=e.target.checked);
   $('cv-wave').addEventListener('change', e=>{ State.customVoice.wave=e.target.value; saveCustomVoice(); });
   [['cv-fm','fm'],['cv-bright','bright'],['cv-attack','attack'],['cv-length','length']].forEach(([id,key])=>{
     $(id).addEventListener('input', e=>{ State.customVoice[key]=+e.target.value; saveCustomVoice(); });
   });
   $('reverb').addEventListener('input', e=>{ State.reverb=+e.target.value; if(reverbGain) reverbGain.gain.value=State.reverb; });
+  $('echo').addEventListener('input', e=>{
+    State.echo=+e.target.value;
+    if(echoSend){ echoSend.gain.value=State.echo; echoFeedback.gain.value=State.echo*0.65; }
+  });
   $('volume').addEventListener('input', e=>{ State.volume=+e.target.value; if(masterGain) masterGain.gain.value=State.volume; });
   $('theme').addEventListener('change', e=>{
     const prev=State.theme; State.theme=e.target.value;
@@ -1079,11 +1269,22 @@
     applyTheme();
   });
   $('trails').addEventListener('change', e=>State.trails=e.target.checked);
+  $('drift').addEventListener('change', e=>{ State.drift=e.target.checked; if(!State.drift) applyTheme(); });
   [['col-bg','bg'],['col-live','live'],['col-dying','dying'],['col-hover','hover']].forEach(([id,key])=>{
     $(id).addEventListener('input', e=>{ State.custom[key]=e.target.value; customSeeded=true; saveCustom(); if(State.theme==='custom') applyTheme(); });
   });
   ['paint','erase','block','blinker','pulsar','glider','glidergun'].forEach(t=>
     $('tool-'+t).addEventListener('click', ()=>setTool(t)));
+  ['off','h','v','quad'].forEach(s=>
+    $('sym-'+s).addEventListener('click', ()=>{ State.symmetry=s; syncControls(); }));
+
+  function setZen(on){
+    State.zen=on;
+    document.body.classList.toggle('zen', on);
+    resetStagnation();
+    resizeCanvas();
+  }
+  $('zen').addEventListener('click', ()=>setZen(!State.zen));
 
   $('save-stamp').addEventListener('click', ()=>{
     const cells=captureStamp();
@@ -1153,6 +1354,8 @@
     else if(e.key==='s'){ stepOnce(); }
     else if(e.key==='c'){ State.grid.fill(0); heat.fill(0); ghost.fill(0); commitEdit(); }
     else if(e.key==='r'){ for(let i=0;i<State.grid.length;i++) State.grid[i]=Math.random()<0.28?1:0; commitEdit(); }
+    else if(e.key==='z'){ setZen(!State.zen); }
+    else if(e.key==='Escape' && State.zen){ setZen(false); }
   });
 
   window.addEventListener('resize', resizeCanvas);

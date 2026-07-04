@@ -24,6 +24,14 @@ Click on the grid to draw cells (or stamp classic patterns), press **Play**, and
   scan direction at will, even mid-play — the playhead keeps its place and walks back
   the other way.
 
+## Beyond Conway
+
+The **rule** picker swaps in other cellular automata, each with its own musical personality:
+**highlife** (B36/S23, self-replicating), **seeds** (B2/S — everything dies each generation;
+explosive, crackly), **day & night**, and **no death** (drones that only ever grow). Turn on
+**rain** and the sim trickles in random cells whenever the population runs low, so it never
+dies out — an infinite ambient generator.
+
 ## Making it sound good
 
 - **Pentatonic** scale (default) can't play a wrong note. Switch to full **Chromatic** piano
@@ -31,8 +39,10 @@ Click on the grid to draw cells (or stamp classic patterns), press **Play**, and
 - Notes trigger on **newly born** cells by default (note onsets), not every live cell — toggle
   to "all live" for denser textures.
 - Four built-in **voices** (bell, pad, pluck, sine) plus a **custom** voice: a 5-slider
-  synth (waveform, bell/FM amount, brightness, attack, length). Reverb and volume sliders
-  shape the mix.
+  synth (waveform, bell/FM amount, brightness, attack, length). Reverb, tempo-synced
+  **echo** (dotted-eighth repeats), and volume sliders shape the mix.
+- The **deaths** toggle gives dying cells their own voice — a dark, quiet tone an octave
+  down. Call-and-response for free.
 - Repeating Life patterns (blinkers, pulsars) become musical loops; gliders become moving
   melodies; a glider gun becomes an evolving stream. Use the stamp palette.
 
@@ -42,21 +52,30 @@ Beyond the classics (box, blinker, pulsar, glider, gun), you can save the curren
 named **custom stamp**, place it anywhere (with a footprint preview before you click), and
 **share** it as a compact code or link that others can import.
 
+The **sym** buttons mirror everything you draw or stamp (left-right, top-bottom, or both) —
+symmetric seeds evolve symmetrically, so you get kaleidoscope patterns that sound structured.
+Four gliders converging on the center is a good time.
+
 ## Look
 
 Four glow themes (green, amber, cyan, magenta) plus a **custom** palette with separate
 background / live / dying / hover colors. Optional dreamy **trails** fade cells out as
-they die.
+they die, and **drift** slowly cycles every color through the spectrum, lava-lamp style.
+
+**Zen mode** (the `zen` button, or `z`) hides the whole panel and fills the window with just
+the grid; if the pattern settles into a still life or dies out, it quietly reseeds itself.
+Pair with rain + drift and leave it running.
 
 ## Sharing & saving
 
 The **Copy link** button encodes your whole session — pattern, mode, tempo, scale, voice,
-theme, sweep direction — into the URL; **load code** restores from a pasted link or code.
-Save slots persist locally in the browser.
+theme, sweep direction, rule, rain — into the URL; **load code** restores from a pasted link
+or code. Save slots persist locally in the browser.
 
 ## Keys
 
-`space` play/pause · `s` step one generation · `c` clear · `r` random fill
+`space` play/pause · `s` step one generation · `c` clear · `r` random fill · `z` zen mode
+(`esc` exits)
 
 ## Tech
 

@@ -49,6 +49,41 @@
       checks.push('block stamp is a 2x2 still life');
     })();
 
+    // --- Engine: died set reports only newly-dead cells ---
+    (function () {
+      var cols = 5, rows = 5, g = AL.makeGrid(cols, rows);
+      g[2 * cols + 1] = g[2 * cols + 2] = g[2 * cols + 3] = 1; // horizontal blinker
+      var died = AL.step(g, cols, rows).died;
+      eq(died.length, 2, 'blinker 2 deaths');
+      ok(died.indexOf(2 * cols + 1) >= 0 && died.indexOf(2 * cols + 3) >= 0, 'deaths are the end cells');
+      checks.push('died set = newly-dead cells only');
+    })();
+
+    // --- Engine: alternate rules ---
+    (function () {
+      ok(AL.RULES && AL.RULES.life && AL.RULES.seeds && AL.RULES.nodeath, 'RULES table exported');
+      // seeds (B2/S): a domino births its 2-neighbor cells and both originals die
+      var cols = 5, rows = 5, g = AL.makeGrid(cols, rows);
+      g[2 * cols + 1] = g[2 * cols + 2] = 1;
+      var s = AL.step(g, cols, rows, AL.RULES.seeds);
+      eq(s.grid[2 * cols + 1], 0, 'seeds: original dies');
+      eq(s.grid[2 * cols + 2], 0, 'seeds: original dies (2)');
+      eq(s.grid[1 * cols + 1], 1, 'seeds: 2-neighbor cell born');
+      eq(s.died.length, 2, 'seeds: everything dies each gen');
+      // nodeath (B3/S012345678): live cells never die
+      var g2 = AL.makeGrid(cols, rows);
+      g2[2 * cols + 1] = g2[2 * cols + 2] = g2[2 * cols + 3] = 1;
+      var s2 = AL.step(g2, cols, rows, AL.RULES.nodeath);
+      eq(s2.grid[2 * cols + 1], 1, 'nodeath: cell survives');
+      eq(s2.died.length, 0, 'nodeath: no deaths');
+      ok(s2.born.length > 0, 'nodeath: births still happen');
+      // no rule argument = classic life (guards every older call site)
+      var lifeDefault = AL.step(g2, cols, rows).grid;
+      var lifeExplicit = AL.step(g2, cols, rows, AL.RULES.life).grid;
+      deepEq(lifeDefault, lifeExplicit, 'default rule is classic life');
+      checks.push('alternate rules (seeds, nodeath) + life default');
+    })();
+
     // --- Engine: born set reports only new cells ---
     (function () {
       var cols = 5, rows = 5, g = AL.makeGrid(cols, rows);
@@ -107,6 +142,21 @@
       ok(d2.custom === null, 'absent custom palette decodes to null');
       eq(d2.sweepDir, 1, 'absent dir decodes to forward (old links stay valid)');
       checks.push('encode/decode round-trips pattern + settings + custom palette');
+    })();
+
+    // --- Persistence: rule + rain round-trip, defaults keep old links valid ---
+    (function () {
+      var base = { grid: AL.makeGrid(4, 4), cols: 4, rows: 4, mode: 'pulse', bpm: 100,
+        scaleId: 'majpent', root: 0, snap: false, voice: 'bell', theme: 'green', trigger: 'newborn' };
+      var d = AL.decodeState(AL.encodeState(Object.assign({}, base, { ruleId: 'seeds', rain: true })));
+      eq(d.ruleId, 'seeds', 'rule round-trips');
+      eq(d.rain, true, 'rain round-trips');
+      var d2 = AL.decodeState(AL.encodeState(base));
+      eq(d2.ruleId, 'life', 'absent rule decodes to classic life');
+      eq(d2.rain, false, 'absent rain decodes to off');
+      ok(AL.encodeState(Object.assign({}, base, { ruleId: 'life' })).indexOf('rule=') < 0,
+         'classic life omits rule= from links');
+      checks.push('rule + rain round-trip (old links stay valid)');
     })();
 
     // --- Persistence: custom voice round-trips only when voice is custom ---
