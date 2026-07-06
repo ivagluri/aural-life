@@ -30,7 +30,8 @@ The **rule** picker swaps in other cellular automata, each with its own musical 
 **highlife** (B36/S23, self-replicating), **seeds** (B2/S — everything dies each generation;
 explosive, crackly), **day & night**, and **no death** (drones that only ever grow). Turn on
 **rain** and the sim trickles in random cells whenever the population runs low, so it never
-dies out — an infinite ambient generator.
+dies out — an infinite ambient generator. The **mutate** button lightly nudges cells around
+the current pattern when you want a variation without wiping the board.
 
 ## Making it sound good
 
@@ -39,8 +40,9 @@ dies out — an infinite ambient generator.
 - Notes trigger on **newly born** cells by default (note onsets), not every live cell — toggle
   to "all live" for denser textures.
 - Five built-in **voices** (bell, pad, pluck, drum, sine) plus a **custom** voice:
-  waveform/FM, brightness, envelope, detune, drive, noise, and thump controls. The
-  randomize button is good for finding odd little sweet spots quickly. Reverb,
+  waveform/FM, brightness, envelope, detune, drive, noise, and thump controls. Custom
+  presets (dust, glass, rubber, laser, soft, kick) and the randomize button are good
+  for finding odd little sweet spots quickly. Reverb,
   tempo-synced **echo** (dotted-eighth repeats), and volume sliders shape the mix.
 - Turn on **arp** to make each triggering cell play a scale-based broken chord. The
   note count picks 1/3/5/7-note patterns, and the rate can run synced to the main
@@ -74,11 +76,16 @@ Pair with rain + drift and leave it running.
 
 The **Copy link** button encodes your whole session — pattern, mode, tempo, scale, voice,
 theme, sweep direction, rule, rain — into the URL; **load code** restores from a pasted link
-or code. Save slots persist locally in the browser.
+or code. Save slots persist locally in the browser. **Moment** pads are short-form local
+performance snapshots: click an empty pad to capture the current grid and sound settings,
+click a filled pad to recall it, or option-click to overwrite.
+
+Control groups can collapse down to their labels with the chevrons. Option-click a chevron
+to solo one section when you only want the arp, voice, color, or stamp controls in view.
 
 ## Keys
 
-`space` play/pause · `s` step one generation · `c` clear · `r` random fill · `z` zen mode
+`space` play/pause · `s` step one generation · `c` clear · `r` random fill · `m` mutate · `z` zen mode
 (`esc` exits)
 
 ## Tech
