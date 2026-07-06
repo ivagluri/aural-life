@@ -44,6 +44,7 @@
   .section{ display:flex; flex-wrap:wrap; gap:14px 22px; }
   .section + .section{ border-left:1px solid #152015; padding-left:22px; }
   .group{ display:flex; flex-direction:column; gap:6px; }
+  .custom-voice-panel{ flex:1 1 100%; }
   .group > .label{ color:var(--dim); font-size:10px; letter-spacing:1.5px; text-transform:uppercase; }
   .row{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   button, select{
@@ -157,13 +158,14 @@
     </div>
 
     <!-- voice -->
-    <div class="group">
+    <div class="group voice-main">
       <span class="label">voice</span>
       <div class="row">
         <select id="voice">
           <option value="bell">bell</option>
           <option value="pad">pad</option>
           <option value="pluck">pluck</option>
+          <option value="drum">drum</option>
           <option value="sine">sine</option>
           <option value="custom">custom…</option>
         </select>
@@ -173,6 +175,9 @@
         </select>
         <label class="chk" title="dying cells sound a dark low tone"><input type="checkbox" id="deaths"> deaths</label>
       </div>
+    </div>
+    <div class="group custom-voice-panel" id="custom-voice-panel" style="display:none">
+      <span class="label">custom</span>
       <div class="row" id="custom-voice" style="display:none">
         <label class="swatch">wave
           <select id="cv-wave">
@@ -186,6 +191,27 @@
         <label class="swatch">bright<input type="range" class="mini" id="cv-bright" min="0" max="1" step="0.01"></label>
         <label class="swatch">attack<input type="range" class="mini" id="cv-attack" min="0" max="1" step="0.01"></label>
         <label class="swatch">length<input type="range" class="mini" id="cv-length" min="0" max="1" step="0.01"></label>
+        <button id="cv-random" title="randomize custom voice">⚂</button>
+      </div>
+      <div class="row" id="custom-voice-more" style="display:none">
+        <label class="swatch">detune<input type="range" class="mini" id="cv-detune" min="0" max="1" step="0.01"></label>
+        <label class="swatch">drive<input type="range" class="mini" id="cv-drive" min="0" max="1" step="0.01"></label>
+        <label class="swatch">noise<input type="range" class="mini" id="cv-noise" min="0" max="1" step="0.01"></label>
+        <label class="swatch">thump<input type="range" class="mini" id="cv-thump" min="0" max="1" step="0.01"></label>
+      </div>
+    </div>
+
+    <!-- arp -->
+    <div class="group">
+      <span class="label">arp</span>
+      <div class="row">
+        <label class="chk" title="turn each cell into a small scale-based arpeggio"><input type="checkbox" id="arp-on"> arp</label>
+        <span class="val" style="min-width:0">notes</span>
+        <input type="range" class="mini" id="arp-notes" min="0" max="3" step="1" value="1">
+        <span class="val" style="min-width:18px" id="arp-notes-val">3</span>
+        <label class="chk" title="sync arpeggio spacing to the main tempo"><input type="checkbox" id="arp-sync" checked> sync</label>
+        <input type="range" class="mini" id="arp-rate" min="0" max="6" step="1" value="3">
+        <span class="val" id="arp-rate-val">1/16</span>
       </div>
     </div>
 
@@ -435,7 +461,11 @@
     }
     if(s.customVoice && s.voice==='custom'){
       const v=s.customVoice;
-      parts.push('cv='+[v.wave, v.fm, v.bright, v.attack, v.length].join('-'));
+      parts.push('cv='+[v.wave, v.fm, v.bright, v.attack, v.length,
+        v.detune||0, v.drive||0, v.noise||0, v.thump||0].join('-'));
+    }
+    if(s.arp && (s.arp.on || s.arp.notes!==3 || s.arp.sync===false || s.arp.rate!==3)){
+      parts.push('arp='+[(s.arp.on?1:0), s.arp.notes||3, s.arp.sync===false?0:1, s.arp.rate==null?3:s.arp.rate].join('-'));
     }
     return parts.join('&');
   }
@@ -457,7 +487,16 @@
     let customVoice=null;
     if(q.cv){
       const p=q.cv.split('-');
-      if(p.length===5) customVoice={ wave:p[0], fm:+p[1], bright:+p[2], attack:+p[3], length:+p[4] };
+      if(p.length>=5) customVoice={
+        wave:p[0], fm:num(p[1],0), bright:num(p[2],0.7), attack:num(p[3],0.1), length:num(p[4],0.5),
+        detune:num(p[5],0), drive:num(p[6],0), noise:num(p[7],0), thump:num(p[8],0)
+      };
+    }
+    let arp=null;
+    if(q.arp){
+      const p=q.arp.split('-');
+      const notes=[1,3,5,7].indexOf(+p[1])>=0 ? +p[1] : 3;
+      arp={ on:p[0]==='1', notes, sync:p[2]!=='0', rate:Math.max(0, Math.min(6, num(p[3],3)|0)) };
     }
     return {
       grid: unpackGrid(q.p||'', cols*rows),
@@ -473,9 +512,10 @@
       voice: q.v||'bell',
       theme: q.t||'green',
       trigger: q.trig||'newborn',
-      custom, customVoice
+      custom, customVoice, arp
     };
   }
+  function num(v, fallback){ v=+v; return isFinite(v) ? v : fallback; }
 
   // ---- Shareable stamp codes ----
   // A stamp = a named list of [x,y] cells (origin-normalized). Encoded as a compact,
@@ -542,6 +582,11 @@
   const $ = id => document.getElementById(id);
 
   // ---------- state ----------
+  const DEFAULT_CUSTOM_VOICE = {
+    wave:'triangle', fm:0, bright:0.7, attack:0.1, length:0.5,
+    detune:0, drive:0, noise:0, thump:0
+  };
+  const DEFAULT_ARP = { on:false, notes:3, sync:true, rate:3 };
   const State = {
     cols:48, rows:24,
     grid:null, mode:'pulse', sweepDir:1, bpm:100,
@@ -551,8 +596,9 @@
     reverb:0.35, echo:0, volume:0.7, theme:'green', trails:true, drift:false,
     symmetry:'off', zen:false,
     custom:{ bg:'#000000', live:'#39ff14', dying:'#2a7d18', hover:'#39ff14' },
-    // custom voice params (all 0..1 except wave): fm=bell amount, bright=filter cutoff
-    customVoice:{ wave:'triangle', fm:0, bright:0.7, attack:0.1, length:0.5 },
+    // custom voice params (all 0..1 except wave): pitched synth plus transient/noise blend
+    customVoice:Object.assign({}, DEFAULT_CUSTOM_VOICE),
+    arp:Object.assign({}, DEFAULT_ARP),
     tool:'paint', running:false, playhead:0
   };
   State.grid = AL.makeGrid(State.cols, State.rows);
@@ -646,27 +692,39 @@
     bell:  {type:'fm', ratio:3.0, modIndex:110, modDecay:0.35, attack:0.006, dur:1.9, gain:0.34},
     pad:   {type:'stack', waves:['sine','triangle','sine'], detune:7, attack:0.35, dur:1.6, release:1.3, gain:0.15},
     pluck: {type:'simple', wave:'triangle', attack:0.004, dur:0.45, gain:0.30},
+    drum:  {type:'simple', wave:'sine', attack:0.001, dur:0.18, gain:0.36, cutoff:4200,
+            pitchDrop:1.4, dropDur:0.055, drive:0.45, noise:0.62, noiseDur:0.075,
+            noiseFreq:2600, noiseQ:0.8, thump:0.65},
     sine:  {type:'simple', wave:'sine', attack:0.012, dur:1.05, gain:0.26}
   };
   // Dying cells (when enabled) sound this: dark, quiet, an octave down.
   const DEATH_CFG = {type:'simple', wave:'sine', attack:0.015, dur:0.8, gain:0.22, cutoff:900};
 
-  // Build a voice config from the 5 custom-voice sliders. Spans the presets'
-  // territory (sine/pluck/pad-ish, plus bell via FM) and everything between.
+  // Build a voice config from the custom controls. Spans sine/pluck/pad-ish,
+  // bell via FM, and pitch-aware percussive transients.
   function customCfg(){
     const v=State.customVoice;
     const cfg={
       attack: 0.002 + v.attack*v.attack*0.6,   // ~2ms .. ~0.6s
       dur:    0.12  + v.length*v.length*3.0,    // ~0.12s .. ~3.1s
       cutoff: 180 * Math.pow(120, v.bright),    // ~180Hz (dark) .. ~21.6kHz (bright)
-      gain:   0.32,
-      wave:   v.wave
+      gain:   0.32 - (v.noise||0)*0.03,
+      wave:   v.wave,
+      detune: (v.detune||0)*90,
+      drive:  (v.drive||0)*0.9,
+      noise:  (v.noise||0)*1.25,
+      noiseDur: 0.045 + (v.noise||0)*0.32,
+      noiseFreq: 1200 + (v.bright||0)*5200,
+      noiseQ: 0.6 + (v.noise||0)*2.2,
+      thump: (v.thump||0)*0.75,
+      pitchDrop: (v.thump||0)*0.65,
+      dropDur: 0.035 + (v.thump||0)*0.08
     };
     if(v.fm>0){ cfg.type='fm'; cfg.ratio=2.0; cfg.modIndex=v.fm*260; cfg.modDecay=0.4; }
     else cfg.type='simple';
     return cfg;
   }
-  function loadCustomVoice(){ try{ const v=JSON.parse(localStorage.getItem('aurallife.voice')||'null'); if(v) Object.assign(State.customVoice, v); }catch(e){} }
+  function loadCustomVoice(){ try{ const v=JSON.parse(localStorage.getItem('aurallife.voice')||'null'); if(v) Object.assign(State.customVoice, DEFAULT_CUSTOM_VOICE, v); }catch(e){} }
   function saveCustomVoice(){ try{ localStorage.setItem('aurallife.voice', JSON.stringify(State.customVoice)); }catch(e){} }
 
   // tanh soft-clip curve: near-linear for small signals, smoothly saturating past
@@ -692,6 +750,15 @@
       }
     }
     return buf;
+  }
+  let noiseBuffer=null;
+  function getNoiseBuffer(){
+    if(noiseBuffer) return noiseBuffer;
+    const len=actx.sampleRate;
+    noiseBuffer=actx.createBuffer(1, len, actx.sampleRate);
+    const d=noiseBuffer.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+    return noiseBuffer;
   }
 
   // Echo lands on the dotted eighth — the classic "sequencer delay" spacing.
@@ -730,7 +797,11 @@
     const cfg = cfgOverride || (State.voice==='custom' ? customCfg() : VOICES[State.voice]);
     const g=actx.createGain();
     let node=g;
-    // optional lowpass (brightness) — only custom voice sets cfg.cutoff
+    if(cfg.drive){
+      const d=actx.createWaveShaper(); d.curve=makeSoftClip(1 + cfg.drive*5); d.oversample='2x';
+      node.connect(d); node=d;
+    }
+    // optional lowpass (brightness/darkening) for custom and percussive voices
     if(cfg.cutoff){
       const f=actx.createBiquadFilter(); f.type='lowpass';
       f.frequency.value=cfg.cutoff; f.Q.value=0.7;
@@ -746,26 +817,64 @@
 
     const t=when, end=t+cfg.dur+(cfg.release||0);
     const oscs=[];
+    function setPitch(o, f, mult){
+      if(cfg.pitchDrop){
+        o.frequency.setValueAtTime(Math.max(1, f*(1+cfg.pitchDrop*(mult||1))), t);
+        o.frequency.exponentialRampToValueAtTime(Math.max(1, f), t+(cfg.dropDur||0.06));
+      } else {
+        o.frequency.setValueAtTime(f, t);
+      }
+    }
     if(cfg.type==='fm'){
-      const carrier=actx.createOscillator(); carrier.type=cfg.wave||'sine'; carrier.frequency.value=freq;
-      const mod=actx.createOscillator(); mod.type='sine'; mod.frequency.value=freq*cfg.ratio;
-      const modGain=actx.createGain();
-      // Envelope the modulation depth: bright at the onset, then settles — avoids the
-      // full-depth FM transient (and its aliased "static") on the attack.
-      const depth=freq*(cfg.modIndex/100);
-      modGain.gain.setValueAtTime(depth, t);
-      modGain.gain.exponentialRampToValueAtTime(Math.max(1, depth*0.15), t+(cfg.modDecay||0.3));
-      mod.connect(modGain); modGain.connect(carrier.frequency);
-      carrier.connect(g); oscs.push(carrier, mod);
+      const detunes=cfg.detune ? [-cfg.detune, cfg.detune] : [0];
+      detunes.forEach(dn=>{
+        const carrier=actx.createOscillator(); carrier.type=cfg.wave||'sine'; setPitch(carrier, freq, 1);
+        const mod=actx.createOscillator(); mod.type='sine'; setPitch(mod, freq*cfg.ratio, 1);
+        carrier.detune.value=dn; mod.detune.value=dn;
+        const modGain=actx.createGain();
+        // Envelope the modulation depth: bright at the onset, then settles — avoids the
+        // full-depth FM transient (and its aliased "static") on the attack.
+        const depth=freq*(cfg.modIndex/100);
+        modGain.gain.setValueAtTime(depth, t);
+        modGain.gain.exponentialRampToValueAtTime(Math.max(1, depth*0.15), t+(cfg.modDecay||0.3));
+        mod.connect(modGain); modGain.connect(carrier.frequency);
+        carrier.connect(g); oscs.push(carrier, mod);
+      });
     } else if(cfg.type==='stack'){
       cfg.waves.forEach((w,idx)=>{
         const o=actx.createOscillator(); o.type=w; o.frequency.value=freq;
         o.detune.value=(idx-(cfg.waves.length-1)/2)*cfg.detune;
         o.connect(g); oscs.push(o);
       });
+    } else if(cfg.detune){
+      [-1,1].forEach(sign=>{
+        const o=actx.createOscillator(); o.type=cfg.wave; setPitch(o, freq, 1);
+        o.detune.value=sign*cfg.detune;
+        o.connect(g); oscs.push(o);
+      });
     } else {
-      const o=actx.createOscillator(); o.type=cfg.wave; o.frequency.value=freq;
+      const o=actx.createOscillator(); o.type=cfg.wave; setPitch(o, freq, 1);
       o.connect(g); oscs.push(o);
+    }
+    if(cfg.thump){
+      const o=actx.createOscillator(); o.type='sine';
+      const f=Math.max(45, Math.min(220, freq*0.5));
+      setPitch(o, f, 1.4);
+      const tg=actx.createGain();
+      tg.gain.setValueAtTime(0.0001, t);
+      tg.gain.linearRampToValueAtTime(Math.max(0.0002, cfg.thump*0.8), t+0.004);
+      tg.gain.exponentialRampToValueAtTime(0.0001, t+0.16+(cfg.thump*0.12));
+      o.connect(tg); tg.connect(g); oscs.push(o);
+    }
+    if(cfg.noise){
+      const n=actx.createBufferSource(); n.buffer=getNoiseBuffer();
+      const nf=actx.createBiquadFilter(); nf.type='bandpass';
+      nf.frequency.value=cfg.noiseFreq||2400; nf.Q.value=cfg.noiseQ||0.8;
+      const ng=actx.createGain();
+      ng.gain.setValueAtTime(0.0001, t);
+      ng.gain.linearRampToValueAtTime(Math.max(0.0002, cfg.noise), t+0.003);
+      ng.gain.exponentialRampToValueAtTime(0.0001, t+(cfg.noiseDur||0.08));
+      n.connect(nf); nf.connect(ng); ng.connect(g); oscs.push(n);
     }
 
     // Amplitude envelope: LINEAR attack (smooth onset, no click) then exponential decay.
@@ -791,9 +900,22 @@
   }
 
   // ---------- sonification helpers ----------
-  function cellFreq(r){
-    const pitchRow = (State.rows-1-r);
+  const ARP_NOTE_STOPS=[1,3,5,7];
+  const ARP_SYNC_STOPS=[4,8,12,16,24,32,48];
+  const ARP_FREE_HZ=[2,3,5,7,10,14,18];
+  const MAX_ARP_TRIGGERS=36;
+  function clampIndex(v, len){ return Math.max(0, Math.min(len-1, v|0)); }
+  function arpSpacing(){
+    const idx=clampIndex(State.arp.rate, ARP_SYNC_STOPS.length);
+    if(State.arp.sync) return (60/State.bpm) * (4/ARP_SYNC_STOPS[idx]);
+    return 1/ARP_FREE_HZ[idx];
+  }
+  function cellFreqAt(r, degreeOffset){
+    const pitchRow = (State.rows-1-r) + (degreeOffset||0);
     return AL.rowToFreq(pitchRow, State.scaleId, State.root, State.snap);
+  }
+  function cellFreq(r){
+    return cellFreqAt(r, 0);
   }
   function cap(arr){
     if(arr.length<=MAX_PER_STEP) return arr;
@@ -809,13 +931,19 @@
     // pulses stay smooth instead of clicking. Small chords are left near full level.
     const level=Math.min(1, 1.5/Math.sqrt(n));
     const spread=Math.min(0.05, 0.012 + n*0.0016);
+    const wantArp=State.arp.on ? State.arp.notes : 1;
+    const arpNotes=Math.max(1, Math.min(wantArp, Math.floor(MAX_ARP_TRIGGERS/Math.max(1,n))));
+    const spacing=State.arp.on && arpNotes>1 ? arpSpacing() : 0;
+    const arpGain=State.arp.on ? 1/Math.sqrt(arpNotes) : 1;
     for(const i of list){
       const r=Math.floor(i/State.cols), c=i%State.cols;
       const pitchNorm=(State.rows-1-r)/(State.rows-1);
-      const vel=(0.9 - pitchNorm*0.4) * level;
+      const vel=(0.9 - pitchNorm*0.4) * level * arpGain;
       const pan=((c/(State.cols-1))*2-1)*0.7;
       const jitter=Math.random()*spread;
-      trigger(cellFreq(r), time+jitter, vel, pan);
+      for(let a=0; a<arpNotes; a++){
+        trigger(cellFreqAt(r, a*2), time+jitter+a*spacing, vel, pan);
+      }
     }
   }
   // Dying cells: same placement in the stereo field, but an octave down, dark and quiet.
@@ -1131,13 +1259,15 @@
 
   function applyDecoded(d){
     const resized = (d.cols!==State.cols || d.rows!==State.rows);
+    const arp=Object.assign({}, DEFAULT_ARP, d.arp||{});
     Object.assign(State, {
       cols:d.cols, rows:d.rows, grid:d.grid, mode:d.mode, sweepDir:d.sweepDir||1, bpm:d.bpm,
       ruleId:d.ruleId||'life', rain:!!d.rain,
-      scaleId:d.scaleId, root:d.root, snap:d.snap, voice:d.voice, theme:d.theme, trigger:d.trigger
+      scaleId:d.scaleId, root:d.root, snap:d.snap, voice:d.voice, theme:d.theme, trigger:d.trigger,
+      arp
     });
     if(d.custom){ Object.assign(State.custom, d.custom); customSeeded=true; saveCustom(); }
-    if(d.customVoice){ Object.assign(State.customVoice, d.customVoice); saveCustomVoice(); }
+    if(d.customVoice){ Object.assign(State.customVoice, DEFAULT_CUSTOM_VOICE, d.customVoice); saveCustomVoice(); }
     if(resized){ heat=new Float32Array(State.cols*State.rows); ghost=new Float32Array(State.cols*State.rows); }
     simGrid=State.grid.slice(); simPlay=sweepStart(); State.playhead=simPlay; visualQueue.length=0;
     syncControls(); applyTheme();
@@ -1179,7 +1309,7 @@
     $('mode-pulse').classList.toggle('active', State.mode==='pulse');
     $('mode-sweep').classList.toggle('active', State.mode==='sweep');
     $('sweep-dir').textContent = State.sweepDir>0 ? '→' : '←';
-    syncCustomInputs(); syncVoiceInputs();
+    syncCustomInputs(); syncVoiceInputs(); syncArpInputs();
   }
   function syncCustomInputs(){
     const c=State.custom;
@@ -1190,7 +1320,20 @@
     const v=State.customVoice;
     $('cv-wave').value=v.wave; $('cv-fm').value=v.fm; $('cv-bright').value=v.bright;
     $('cv-attack').value=v.attack; $('cv-length').value=v.length;
+    $('cv-detune').value=v.detune||0; $('cv-drive').value=v.drive||0;
+    $('cv-noise').value=v.noise||0; $('cv-thump').value=v.thump||0;
+    $('custom-voice-panel').style.display = State.voice==='custom' ? 'flex' : 'none';
     $('custom-voice').style.display = State.voice==='custom' ? 'flex' : 'none';
+    $('custom-voice-more').style.display = State.voice==='custom' ? 'flex' : 'none';
+  }
+  function syncArpInputs(){
+    const rate=clampIndex(State.arp.rate, ARP_SYNC_STOPS.length);
+    $('arp-on').checked=State.arp.on;
+    $('arp-notes').value=Math.max(0, ARP_NOTE_STOPS.indexOf(State.arp.notes));
+    $('arp-notes-val').textContent=State.arp.notes;
+    $('arp-sync').checked=State.arp.sync;
+    $('arp-rate').value=rate;
+    $('arp-rate-val').textContent=State.arp.sync ? '1/'+ARP_SYNC_STOPS[rate] : ARP_FREE_HZ[rate]+'/s';
   }
   function applyTheme(){
     const p=palette();
@@ -1249,9 +1392,31 @@
   $('trigger').addEventListener('change', e=>State.trigger=e.target.value);
   $('deaths').addEventListener('change', e=>State.deathVoice=e.target.checked);
   $('cv-wave').addEventListener('change', e=>{ State.customVoice.wave=e.target.value; saveCustomVoice(); });
-  [['cv-fm','fm'],['cv-bright','bright'],['cv-attack','attack'],['cv-length','length']].forEach(([id,key])=>{
+  [['cv-fm','fm'],['cv-bright','bright'],['cv-attack','attack'],['cv-length','length'],
+   ['cv-detune','detune'],['cv-drive','drive'],['cv-noise','noise'],['cv-thump','thump']].forEach(([id,key])=>{
     $(id).addEventListener('input', e=>{ State.customVoice[key]=+e.target.value; saveCustomVoice(); });
   });
+  $('cv-random').addEventListener('click', ()=>{
+    const waves=['sine','triangle','square','sawtooth'];
+    const hit=Math.random()<0.42;
+    const r=(a,b)=>+(a+Math.random()*(b-a)).toFixed(2);
+    Object.assign(State.customVoice, {
+      wave:waves[(Math.random()*waves.length)|0],
+      fm: hit ? r(0,0.18) : r(0,0.7),
+      bright: hit ? r(0.45,0.95) : r(0.15,0.9),
+      attack: hit ? r(0,0.08) : r(0,0.55),
+      length: hit ? r(0,0.28) : r(0.18,0.85),
+      detune: hit ? r(0,0.18) : r(0,0.75),
+      drive: r(0, hit ? 0.75 : 0.45),
+      noise: hit ? r(0.22,0.9) : r(0,0.35),
+      thump: hit ? r(0.25,0.95) : r(0,0.4)
+    });
+    saveCustomVoice(); syncVoiceInputs(); toast('voice randomized');
+  });
+  $('arp-on').addEventListener('change', e=>{ State.arp.on=e.target.checked; syncArpInputs(); });
+  $('arp-notes').addEventListener('input', e=>{ State.arp.notes=ARP_NOTE_STOPS[+e.target.value]||3; syncArpInputs(); });
+  $('arp-sync').addEventListener('change', e=>{ State.arp.sync=e.target.checked; syncArpInputs(); });
+  $('arp-rate').addEventListener('input', e=>{ State.arp.rate=+e.target.value; syncArpInputs(); });
   $('reverb').addEventListener('input', e=>{ State.reverb=+e.target.value; if(reverbGain) reverbGain.gain.value=State.reverb; });
   $('echo').addEventListener('input', e=>{
     State.echo=+e.target.value;

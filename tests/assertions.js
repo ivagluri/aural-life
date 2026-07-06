@@ -161,16 +161,40 @@
 
     // --- Persistence: custom voice round-trips only when voice is custom ---
     (function () {
-      var cv = { wave: 'sawtooth', fm: 0.42, bright: 0.8, attack: 0.15, length: 0.6 };
+      var cv = { wave: 'sawtooth', fm: 0.42, bright: 0.8, attack: 0.15, length: 0.6,
+        detune: 0.22, drive: 0.33, noise: 0.44, thump: 0.55 };
       var base = { grid: AL.makeGrid(4, 4), cols: 4, rows: 4, mode: 'pulse', bpm: 100,
         scaleId: 'majpent', root: 0, snap: false, theme: 'green', trigger: 'newborn' };
       var withV = AL.decodeState(AL.encodeState(Object.assign({}, base, { voice: 'custom', customVoice: cv })));
       ok(withV.customVoice && withV.customVoice.wave === 'sawtooth' && withV.customVoice.fm === 0.42 &&
-         withV.customVoice.bright === 0.8 && withV.customVoice.attack === 0.15 && withV.customVoice.length === 0.6,
+         withV.customVoice.bright === 0.8 && withV.customVoice.attack === 0.15 && withV.customVoice.length === 0.6 &&
+         withV.customVoice.detune === 0.22 && withV.customVoice.drive === 0.33 &&
+         withV.customVoice.noise === 0.44 && withV.customVoice.thump === 0.55,
          'custom voice round-trips');
       var noV = AL.decodeState(AL.encodeState(Object.assign({}, base, { voice: 'bell', customVoice: cv })));
       ok(noV.customVoice === null, 'custom voice omitted when voice is a preset');
-      checks.push('custom voice round-trips (only when active)');
+      var legacy = AL.decodeState('p=A&c=1&r=1&m=pulse&bpm=100&s=majpent&root=0&snap=0&v=custom&t=green&trig=newborn&cv=sine-0.1-0.2-0.3-0.4');
+      ok(legacy.customVoice && legacy.customVoice.wave === 'sine' && legacy.customVoice.fm === 0.1 &&
+         legacy.customVoice.bright === 0.2 && legacy.customVoice.attack === 0.3 &&
+         legacy.customVoice.length === 0.4 && legacy.customVoice.detune === 0 &&
+         legacy.customVoice.drive === 0 && legacy.customVoice.noise === 0 && legacy.customVoice.thump === 0,
+         'legacy custom voice decodes with new defaults');
+      checks.push('custom voice round-trips (expanded + legacy, only when active)');
+    })();
+
+    // --- Persistence: arpeggio settings round-trip, defaults keep old links lean ---
+    (function () {
+      var base = { grid: AL.makeGrid(4, 4), cols: 4, rows: 4, mode: 'pulse', bpm: 100,
+        scaleId: 'majpent', root: 0, snap: false, voice: 'bell', theme: 'green', trigger: 'newborn' };
+      var arp = { on: true, notes: 7, sync: false, rate: 5 };
+      var d = AL.decodeState(AL.encodeState(Object.assign({}, base, { arp: arp })));
+      ok(d.arp && d.arp.on === true && d.arp.notes === 7 && d.arp.sync === false && d.arp.rate === 5,
+         'arp settings round-trip');
+      var d2 = AL.decodeState(AL.encodeState(Object.assign({}, base, { arp: { on: false, notes: 3, sync: true, rate: 3 } })));
+      ok(d2.arp === null, 'default arp settings omit arp= from links');
+      var d3 = AL.decodeState('p=A&c=1&r=1&m=pulse&bpm=100&s=majpent&root=0&snap=0&v=bell&t=green&trig=newborn');
+      ok(d3.arp === null, 'absent arp decodes to null');
+      checks.push('arp settings round-trip (defaults omitted)');
     })();
 
     // --- Shareable stamps: encode/decode round-trips cells + name ---

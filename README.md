@@ -38,9 +38,13 @@ dies out — an infinite ambient generator.
   for authenticity + dissonance, with an optional snap-to-scale safety net.
 - Notes trigger on **newly born** cells by default (note onsets), not every live cell — toggle
   to "all live" for denser textures.
-- Four built-in **voices** (bell, pad, pluck, sine) plus a **custom** voice: a 5-slider
-  synth (waveform, bell/FM amount, brightness, attack, length). Reverb, tempo-synced
-  **echo** (dotted-eighth repeats), and volume sliders shape the mix.
+- Five built-in **voices** (bell, pad, pluck, drum, sine) plus a **custom** voice:
+  waveform/FM, brightness, envelope, detune, drive, noise, and thump controls. The
+  randomize button is good for finding odd little sweet spots quickly. Reverb,
+  tempo-synced **echo** (dotted-eighth repeats), and volume sliders shape the mix.
+- Turn on **arp** to make each triggering cell play a scale-based broken chord. The
+  note count picks 1/3/5/7-note patterns, and the rate can run synced to the main
+  tempo or free for looser motion.
 - The **deaths** toggle gives dying cells their own voice — a dark, quiet tone an octave
   down. Call-and-response for free.
 - Repeating Life patterns (blinkers, pulsars) become musical loops; gliders become moving
