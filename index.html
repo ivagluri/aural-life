@@ -296,6 +296,15 @@
         <button id="del">del</button>
       </div>
     </div>
+    <div class="group">
+      <span class="label">moments</span>
+      <div class="row">
+        <button class="moment-pad" data-moment="0" title="click empty to save, click filled to load, option-click to overwrite">m1</button>
+        <button class="moment-pad" data-moment="1" title="click empty to save, click filled to load, option-click to overwrite">m2</button>
+        <button class="moment-pad" data-moment="2" title="click empty to save, click filled to load, option-click to overwrite">m3</button>
+        <button class="moment-pad" data-moment="3" title="click empty to save, click filled to load, option-click to overwrite">m4</button>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -1255,6 +1264,7 @@
 
   // ---------- persistence ----------
   const SLOT_KEY='aurallife.slots';
+  const MOMENT_KEY='aurallife.moments';
   function currentEncoded(){ return AL.encodeState(State); }
 
   function applyDecoded(d){
@@ -1291,10 +1301,36 @@
 
   function readSlots(){ try{ return JSON.parse(localStorage.getItem(SLOT_KEY)||'[]'); }catch(e){ return []; } }
   function writeSlots(s){ try{ localStorage.setItem(SLOT_KEY, JSON.stringify(s)); }catch(e){} }
+  function readMoments(){ try{ return JSON.parse(localStorage.getItem(MOMENT_KEY)||'[]'); }catch(e){ return []; } }
+  function writeMoments(s){ try{ localStorage.setItem(MOMENT_KEY, JSON.stringify(s)); }catch(e){} }
   function refreshSlots(){
     const sel=$('slots'), slots=readSlots();
     sel.innerHTML='<option value="">— slots —</option>';
     slots.forEach((s,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=s.name; sel.appendChild(o); });
+  }
+  function currentMoment(){
+    return {
+      data: currentEncoded(),
+      extras: {
+        deathVoice:State.deathVoice, reverb:State.reverb, echo:State.echo, volume:State.volume,
+        trails:State.trails, drift:State.drift
+      }
+    };
+  }
+  function applyMoment(m){
+    if(typeof m==='string') m={data:m};
+    applyDecoded(AL.decodeState(m.data));
+    Object.assign(State, m.extras||{});
+    if(reverbGain) reverbGain.gain.value=State.reverb;
+    if(echoSend){ echoSend.gain.value=State.echo; echoFeedback.gain.value=State.echo*0.65; }
+    if(masterGain) masterGain.gain.value=State.volume;
+    syncControls(); applyTheme();
+  }
+  function refreshMoments(){
+    const moments=readMoments();
+    Array.prototype.forEach.call(document.querySelectorAll('.moment-pad'), btn=>{
+      btn.classList.toggle('active', !!moments[+btn.dataset.moment]);
+    });
   }
 
   // ---------- UI wiring ----------
@@ -1512,6 +1548,17 @@
     const idx=$('slots').value; if(idx==='') return;
     const slots=readSlots(); slots.splice(+idx,1); writeSlots(slots); refreshSlots(); toast('deleted');
   });
+  Array.prototype.forEach.call(document.querySelectorAll('.moment-pad'), btn=>{
+    btn.addEventListener('click', e=>{
+      const idx=+btn.dataset.moment, moments=readMoments();
+      if(!moments[idx] || e.altKey || e.metaKey || e.shiftKey){
+        moments[idx]=currentMoment(); writeMoments(moments); refreshMoments(); toast('saved m'+(idx+1));
+      } else {
+        try{ applyMoment(moments[idx]); toast('loaded m'+(idx+1)); }
+        catch(err){ toast('bad moment'); }
+      }
+    });
+  });
 
   window.addEventListener('keydown', e=>{
     if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
@@ -1545,7 +1592,7 @@
     } else {
       seedDefault();
     }
-    syncControls(); applyTheme(); refreshSlots(); refreshStampPicker(); resizeCanvas();
+    syncControls(); applyTheme(); refreshSlots(); refreshMoments(); refreshStampPicker(); resizeCanvas();
     commitEdit();
     requestAnimationFrame(tick);
   }
