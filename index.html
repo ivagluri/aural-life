@@ -98,6 +98,7 @@
         <button id="play" class="play">▶ play</button>
         <button id="step" class="wide">step</button>
         <button id="random" class="wide">random</button>
+        <button id="mutate" class="wide" title="nudge cells near the active pattern">mutate</button>
         <button id="clear" class="wide">clear</button>
         <button id="zen" title="zen mode: hide the panel, fill the window (z / esc)">zen</button>
       </div>
@@ -1362,6 +1363,20 @@
     }
     return cells.map(([c,r])=>[c-minx, r-miny]);
   }
+  function mutateGrid(){
+    const live=liveCells(State.grid);
+    const count=live.length ? 14 : 24;
+    for(let k=0;k<count;k++){
+      const center=live.length ? live[(Math.random()*live.length)|0] : ((Math.random()*State.grid.length)|0);
+      const cc=center%State.cols, rr=Math.floor(center/State.cols);
+      const c=(cc+((Math.random()*7)|0)-3+State.cols)%State.cols;
+      const r=(rr+((Math.random()*7)|0)-3+State.rows)%State.rows;
+      const i=r*State.cols+c;
+      State.grid[i] = State.grid[i] ? (Math.random()<0.72 ? 0 : 1) : 1;
+      heat[i]=1;
+    }
+    commitEdit(); resetStagnation(); toast('mutated');
+  }
   let toastTimer=null;
   function toast(msg){
     const el=$('toast'); el.textContent=msg; el.classList.add('show');
@@ -1375,6 +1390,7 @@
     for(let i=0;i<State.grid.length;i++) State.grid[i] = Math.random()<0.28 ? 1 : 0;
     commitEdit();
   });
+  $('mutate').addEventListener('click', mutateGrid);
   $('mode-pulse').addEventListener('click', ()=>{ State.mode='pulse'; simPlay=0; State.playhead=0; syncControls(); });
   $('mode-sweep').addEventListener('click', ()=>{ State.mode='sweep'; simPlay=sweepStart(); State.playhead=simPlay; syncControls(); });
   // flip mid-flight: the playhead keeps its position and walks back the other way
@@ -1519,6 +1535,7 @@
     else if(e.key==='s'){ stepOnce(); }
     else if(e.key==='c'){ State.grid.fill(0); heat.fill(0); ghost.fill(0); commitEdit(); }
     else if(e.key==='r'){ for(let i=0;i<State.grid.length;i++) State.grid[i]=Math.random()<0.28?1:0; commitEdit(); }
+    else if(e.key==='m'){ mutateGrid(); }
     else if(e.key==='z'){ setZen(!State.zen); }
     else if(e.key==='Escape' && State.zen){ setZen(false); }
   });
